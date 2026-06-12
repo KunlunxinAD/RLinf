@@ -411,15 +411,16 @@ def compute_logprobs_from_logits(
     assert op_type in ["torch", "flash_attn", "liger_kernel"], (
         f"Unsupported op_type: {op_type} for logprobs computation. Supported types are 'torch', 'flash_attn', 'liger_kernel'."
     )
-    if op_type == "liger_kernel":
-        # liger_kernel will use input dtype to compute logprobs.
-        logprobs = logprobs_from_logits_liger_kernel(logits, labels)
-    elif op_type == "flash_attn":
-        # flash_attn will use fp32 to compute logprobs.
-        logprobs = logprobs_from_logits_flash_attn(logits, labels)
-    elif op_type == "torch":
-        # torch will use input dtype to compute logprobs.
-        logprobs = -F.cross_entropy(logits, labels, reduction="none")
+    # if op_type == "liger_kernel":
+    #     # liger_kernel will use input dtype to compute logprobs.
+    #     logprobs = logprobs_from_logits_liger_kernel(logits, labels)
+    # elif op_type == "flash_attn":
+    #     # flash_attn will use fp32 to compute logprobs.
+    #     logprobs = logprobs_from_logits_flash_attn(logits, labels)
+    # elif op_type == "torch":
+    #     # torch will use input dtype to compute logprobs.
+    #     logprobs = -F.cross_entropy(logits, labels, reduction="none")
+    logprobs = -F.cross_entropy(logits, labels, reduction="none")
 
     # reshape back to [B, seq-len]
     logprobs = logprobs.view(*batch_dim).float()

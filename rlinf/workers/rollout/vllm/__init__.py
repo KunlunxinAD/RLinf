@@ -35,7 +35,18 @@ if package_version is None:
     )
 elif package_version >= parse("0.8.5") and package_version < parse("0.9.0"):
     from rlinf.hybrid_engines.vllm.vllm_0_8_5.executor import VLLMExecutor
+
+    VLLM_WORKER_CLS = "rlinf.hybrid_engines.vllm.vllm_0_8_5.worker.VLLMWorker"
+elif package_version >= parse("0.17.0") and package_version < parse("0.18.0"):
+    from rlinf.hybrid_engines.vllm.vllm_0_17_0.executor import VLLMExecutor
+
+    VLLM_WORKER_CLS = "rlinf.hybrid_engines.vllm.vllm_0_17_0.worker.VLLMWorker"
 else:
     raise ValueError(f"vllm version {package_version} not supported")
 
-__all__ = ["VLLMExecutor"]
+
+def use_runner_arg() -> bool:
+    return package_version >= parse("0.17.0")
+
+
+__all__ = ["VLLMExecutor", "VLLM_WORKER_CLS", "use_runner_arg"]
