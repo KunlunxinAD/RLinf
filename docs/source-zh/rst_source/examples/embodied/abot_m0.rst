@@ -1,100 +1,43 @@
 ABot-M0 强化学习训练
-========================================
+====================
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png
-   :align: center
-   :width: 80%
+本文档介绍如何在 RLinf 中对 `ABot-M0 <https://github.com/amap-cvlab/ABot-Manipulation>`__ 进行评测与 PPO 训练。示例配置覆盖标准 **LIBERO** 和 **LIBERO-Plus**。
 
-   ABot-M0：以 VGGT 为空间基础的 VLA 策略。
+该适配使用 Hugging Face rollout backend 和 FSDP actor 训练。rollout 阶段，ABot-M0 为 LIBERO 环境生成动作块；actor 更新阶段，RLinf 基于 rollout 中保存的输入重新计算 log probability 和 value。
 
-在 RLinf 中对 `ABot-M0 <https://github.com/amap-cvlab/ABot-Manipulation>`__ 进行评测与
-**PPO** 训练，覆盖标准 **LIBERO** 与 **LIBERO-Plus**。该适配使用 HuggingFace rollout
-backend 与 FSDP actor 训练：rollout 阶段 ABot-M0 生成动作块，actor 更新阶段 RLinf 基于
-rollout 中保存的输入重新计算 log probability 与 value。
+算法
+----
 
-概览
-----------------------------------------
+本示例使用 actor-critic 形式的 PPO：
 
-在 LIBERO-10 / LIBERO-Plus 上用 PPO（actor-critic）微调 ABot-M0。
+* 使用 GAE 估计 advantage 和 return。
+* 使用 PPO ratio clipping 约束策略更新。
+* 对 value head 使用 value-function clipping。
+* 支持可选的 entropy regularization。
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+ABot-M0 作为 VLA 策略接入 RLinf。适配层冻结预训练感知模块，通过 RL objective 训练动作模型，并额外加入 value head 以支持 actor-critic 训练。
 
-   .. grid-item-card:: 环境
-      :text-align: center
-
-      LIBERO · LIBERO-Plus
-
-   .. grid-item-card:: 算法
-      :text-align: center
-
-      PPO
-
-   .. grid-item-card:: 任务
-      :text-align: center
-
-      LIBERO-10
-
-   .. grid-item-card:: 硬件
-      :text-align: center
-
-      1 节点 · GPU
-
-| **你将完成：** 安装 → 下载 ABot-M0 checkpoint 与骨干权重 → 设置 ``model_path`` → 评测 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 ABot-M0 LIBERO checkpoint 及其骨干权重（见下文）。
-
-ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，通过 RL objective 训练动作模型，
-并额外加入 value head 以支持 actor-critic PPO（GAE 估计 advantage/return、ratio clipping、
-value clipping、可选 entropy 正则）。
-
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-根据环境、任务族以及配置或权重工件选择对应的模型页面。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 24 30 24
-
-   * - 环境
-     - 任务 / 套件
-     - 配置 / 权重
-     - 重点
-   * - LIBERO
-     - LIBERO-10
-     - ``libero_10_ppo_abot_m0``
-     - 针对 ABot-M0 release checkpoint 的 PPO 微调。
-   * - LIBERO
-     - LIBERO-10+
-     - ``libero_10_plus_ppo_abot_m0``
-     - 使用 ABot-M0 进行长程 LIBERO-10+ 训练。
-
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38
-
-   * - 字段
-     - 说明
-   * - Observation
-     - ABot-M0 所需的 LIBERO RGB 观测与机器人状态。
-   * - Action
-     - 从 ABot-M0 策略输出解码的连续机器人动作。
-   * - Reward
-     - PPO 使用的 LIBERO 成功信号或任务奖励。
-   * - Prompt
-     - 每个 LIBERO 任务对应的自然语言指令。
-
-安装
-----------------------------------------
+依赖安装
+--------
 
 请在同一个 Python 环境中安装 ABot-M0、VGGT 和 LIBERO 运行时。
 
-.. include:: _setup_common.rst
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
 
 .. code:: bash
 
@@ -103,14 +46,20 @@ value clipping、可选 entropy 正则）。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-   # 进入容器后，切换到 ABot-M0 虚拟环境：
+请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
    source switch_env abot_m0
 
-**选项 2：自定义环境** —— 安装套件 ``--env maniskill_libero``。安装脚本会自动克隆 ABot-M0
-和 VGGT；若要复用本地 checkout，请先设置 ``ABOT_PATH`` / ``VGGT_PATH``：
+**选项 2：自定义环境**
+
+安装脚本会自动克隆 ABot-M0 和 VGGT。如果你已经有本地源码 checkout，可在运行安装脚本前设置
+``ABOT_PATH`` 和 ``VGGT_PATH``。
 
 .. code:: bash
 
@@ -118,7 +67,7 @@ value clipping、可选 entropy 正则）。
    # export ABOT_PATH=<path_to_ABot-Manipulation>
    # export VGGT_PATH=<path_to_vggt>
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
+   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令。
    bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
    source .venv/bin/activate
 
@@ -131,7 +80,7 @@ value clipping、可选 entropy 正则）。
    source .venv/bin/activate
 
 LIBERO-Plus 资产下载
-----------------------------------------
+--------------------
 
 LIBERO-Plus 需要大量新增对象、纹理和其他资产才能正常运行。请从 Hugging Face dataset
 ``Sylvest/LIBERO-plus`` 下载 ``assets.zip``，并解压到已安装的
@@ -204,10 +153,10 @@ LIBERO-Plus 需要大量新增对象、纹理和其他资产才能正常运行�
        ├── wall_frames.stl
        └── wall.xml
 
-LIBERO-Plus 的完整说明见 LIBERO 基准文档的 :ref:`LIBERO-Pro 与 LIBERO-Plus 章节 <zh-liberopro-plus-benchmark>`。
+LIBERO-Plus 的完整说明见 :doc:`liberoplus_pro`。
 
-下载模型
-----------------------------------------
+模型下载
+--------
 
 训练开始前，请下载 ABot-M0 checkpoint 和所需 backbone 权重：
 
@@ -258,7 +207,7 @@ VGGT 加载路径显式改为本地目录。
    self.spatial_model = spatial_model = VGGT.from_pretrained('/workspace/models/VGGT-1B')
 
 配置 ``model_path``
-----------------------------------------
+-------------------
 
 针对两个 benchmark 各提供一份配置：
 
@@ -282,7 +231,7 @@ VGGT 加载路径显式改为本地目录。
        model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
 导入完整性验证
-----------------------------------------
+--------------
 
 .. code-block:: bash
 
@@ -290,32 +239,64 @@ VGGT 加载路径显式改为本地目录。
 
 若输出 ``IMPORT_OK``，说明包级依赖链路正常。
 
-独立评测
-----------------------------------------
+评测
+----
 
-训练前请使用统一的 Evaluation 章节验证 ABot-M0 checkpoint。先阅读
-:doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`，并在评测配置中同时设置
-``actor.model.model_path`` 与 ``rollout.model.model_path`` 指向 ABot-M0 checkpoint。
+建议在训练前先执行独立评测，用于验证 checkpoint、rollout 流程和环境资产是否正确。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 36 36
+评测入口是 ``examples/embodiment/eval_embodied_agent.py``。两个 benchmark
+共用同一套启动流程，差异只在 ``LIBERO_TYPE`` 与配置文件名。
 
-   * - 套件
-     - 配置来源
-     - 需要修改
-   * - LIBERO-10
-     - 通过 Evaluation 配置回退使用 ``libero_10_ppo_abot_m0``
-     - 设置 ``LIBERO_TYPE=standard``，并将两个 model path 指向 ABot-M0 checkpoint。
-   * - LIBERO-10+
-     - 通过 Evaluation 配置回退使用 ``libero_10_plus_ppo_abot_m0``
-     - 设置 ``LIBERO_TYPE=plus``，并将两个 model path 指向 ABot-M0 checkpoint。
+通用环境变量：
 
-CLI 用法、Hydra 覆盖、日志和视频输出见 :doc:`Evaluation CLI 参考 <../../evaluations/reference/cli>`
-与 :doc:`Evaluation 结果参考 <../../evaluations/reference/results>`。
+.. code-block:: bash
 
-运行
-----------------------------------------
+   source .venv/bin/activate
+
+   export REPO_PATH=$(pwd)
+   export EMBODIED_PATH=$(pwd)/examples/embodiment
+   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+   export MUJOCO_GL=egl
+   export PYOPENGL_PLATFORM=egl
+   export ROBOT_PLATFORM=LIBERO
+
+   ray stop || true
+   ray start --head --port=6379
+
+**LIBERO：**
+
+.. code-block:: bash
+
+   export LIBERO_TYPE=standard
+
+   python examples/embodiment/eval_embodied_agent.py \
+     --config-name libero_10_ppo_abot_m0 \
+     actor.model.model_path=<path_to_abot_m0_ckpt> \
+     rollout.model.model_path=<path_to_abot_m0_ckpt> \
+     runner.only_eval=True \
+     env.eval.total_num_envs=8 \
+     env.eval.video_cfg.save_video=true \
+     algorithm.eval_rollout_epoch=1 \
+     runner.logger.experiment_name=abot_m0_libero10_eval
+
+**LIBERO-Plus：**
+
+.. code-block:: bash
+
+   export LIBERO_TYPE=plus
+
+   python examples/embodiment/eval_embodied_agent.py \
+     --config-name libero_10_plus_ppo_abot_m0 \
+     actor.model.model_path=<path_to_abot_m0_ckpt> \
+     rollout.model.model_path=<path_to_abot_m0_ckpt> \
+     runner.only_eval=True \
+     env.eval.total_num_envs=8 \
+     env.eval.video_cfg.save_video=true \
+     algorithm.eval_rollout_epoch=1 \
+     runner.logger.experiment_name=abot_m0_liberoplus_eval
+
+训练
+----
 
 PPO 训练与评测共用同一套启动流程。通过 ``LIBERO_TYPE`` 选择目标套件，并启动对应配置。
 
@@ -348,11 +329,8 @@ PPO 训练与评测共用同一套启动流程。通过 ``LIBERO_TYPE`` 选择�
    export LIBERO_TYPE=plus
    bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
 
-可视化与结果
-----------------------------------------
-
-关注任务成功率指标 ``env/success_once``。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
+可视化
+------
 
 .. code-block:: bash
 

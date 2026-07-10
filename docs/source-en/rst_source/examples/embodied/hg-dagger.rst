@@ -1,84 +1,49 @@
-Using HG-DAgger with Franka
-===========================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg
-   :align: center
-   :width: 80%
+HG-DAgger for Real-World Franka
+===============================
 
-   Human-Gated DAgger workflow for collecting interventions and training a Franka policy online.
+**HG-DAgger** (Human-Gated DAgger) is an algorithm for real-world interactive imitation
+learning pipeline. The workflow starts with teleoperated real-world data collection, runs OpenPI SFT on the collected LeRobot dataset, and then continues with async online HG-DAgger on the robot.
 
-Train a real-world Franka policy with Human-Gated DAgger. You will collect intervention data, compute OpenPI normalization stats, run SFT, then launch online HG-DAgger with expert-only steps saved for training.
+In RLinf configs, HG-DAgger is enabled by setting ``algorithm.dagger.only_save_expert: True``. This keeps only the expert-acted steps, which is the default choice for real-world intervention data.
 
-Overview
---------
+Environment
+-----------
 
-Use human-gated interventions to improve a real-world Franka policy online.
+**Real-World Franka Bin Relocation + Pi0**
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+- **Environment**: ``FrankaBinRelocationEnv-v1`` on a robot node
+- **Observation**: Wrist / external RGB images and robot state
+- **Action Space**: Delta end-effector qpos and gripper action
+- **Use Case**: Collect human-guided real-world data, run OpenPI SFT, then continue async HG-DAgger
 
-   .. grid-item-card:: Models
-      :text-align: center
+Algorithm
+---------
 
-      OpenPI π₀ / π₀.₅
+**HG-DAgger Pipeline**
 
-   .. grid-item-card:: Algorithms
-      :text-align: center
+1. **Human-Guided Collection**
 
-      SFT · HG-DAgger
+   - A human operator intervenes through the spacemouse on the real robot.
+   - RLinf exports the successful trajectories in LeRobot format for later SFT.
 
-   .. grid-item-card:: Tasks
-      :text-align: center
+2. **Supervised Warm Start**
 
-      Real-world PnP
+   - Compute normalization statistics for the collected dataset.
+   - Run OpenPI SFT to turn the collected human-guided dataset into the initial student policy.
 
-   .. grid-item-card:: Hardware
-      :text-align: center
+3. **Online HG-DAgger**
 
-      Franka · SpaceMouse/operator
+   - Async rollout continues on the real robot; expert actions come from human teleoperation through the spacemouse.
+   - With ``only_save_expert: True``, only expert-acted steps are added to the replay buffer.
 
-| **You'll do:** collect intervention data → compute norm stats → run SFT → launch HG-DAgger → monitor interventions.
-| **Prerequisites:** :doc:`franka` · :doc:`sft_openpi` · Ray cluster · trained or base OpenPI checkpoint.
+4. **Replay-Buffer Updates**
 
-Tasks
-~~~~~
+   - The actor trains on the buffered intervention data with the
+     ``embodied_dagger`` loss.
+   - The student checkpoint from SFT becomes the initialization for online training.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
-
-   * - Task
-     - Config / entry point
-     - Description
-   * - Collection
-     - ``realworld_collect_data``
-     - Collect real-world intervention demonstrations.
-   * - SFT
-     - ``realworld_sft_openpi``
-     - Train the student initialization.
-   * - HG-DAgger
-     - ``realworld_pnp_dagger_openpi``
-     - Run online intervention training with expert-only save mode.
-
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
-
-   * - Field
-     - Description
-   * - Observation
-     - Franka camera frames and optional robot state.
-   * - Action
-     - OpenPI action decoded to Franka real-world control.
-   * - Reward
-     - Human-gated intervention signal and task outcome.
-   * - Prompt
-     - Task text in OpenPI dataset/config metadata.
-
-Installation
-------------
+Dependency Installation
+-----------------------
 
 The real-world pipeline uses **different environments on different nodes**:
 
@@ -100,9 +65,9 @@ kernel, ROS, and Franka controller dependencies.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-franka
+      rlinf/rlinf:agentic-rlinf0.2-franka
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
 
 Then switch to the libfranka-compatible environment:
 
@@ -121,8 +86,8 @@ Then switch to the libfranka-compatible environment:
 Before ``ray start`` on the robot node, source the same ROS / Franka controller
 environment described in :doc:`franka`.
 
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
+Training / Rollout Node
+~~~~~~~~~~~~~~~~~~~~~~~
 
 Use the same environment as simulator Pi0 DAgger.
 
@@ -135,9 +100,9 @@ Use the same environment as simulator Pi0 DAgger.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 Inside the container:
 
@@ -174,8 +139,8 @@ in :doc:`franka`. The training / rollout node is typically the Ray head
 Ray records the current Python interpreter and environment variables at startup,
 so make sure each node has sourced the correct environment before ``ray start``.
 
-Run It
-------
+Full Pipeline
+-------------
 
 1. Collect Human-Guided Real-World Data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -229,7 +194,7 @@ During teleoperation, the same run writes:
 - replay-buffer trajectories under ``logs/{timestamp}/demos/``
 - LeRobot data under ``logs/{timestamp}/collected_data/``
 
-For the collection format, see :doc:`../../guides/data_collection`.
+For the collection format, see :doc:`../../tutorials/embodied/data_collection`.
 
 2. Compute Normalization Statistics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -329,8 +294,8 @@ Launch HG-DAgger from the Ray head node:
 
    bash examples/embodiment/run_realworld_async.sh realworld_pnp_dagger_openpi
 
-Visualization and Results
--------------------------
+Visualization and Monitoring
+----------------------------
 
 **1. TensorBoard Logs**
 

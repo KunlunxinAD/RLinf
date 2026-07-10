@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Configure ROS apt source for the current Ubuntu version.
-USE_MIRRORS=${USE_MIRRORS:-0}
+# Configure ROS apt source for the current Ubuntu version using USTC mirror.
 
 # Check if apt is available
 if ! command -v apt-get &> /dev/null; then
@@ -43,11 +42,7 @@ if [ -z "$ubuntu_codename" ]; then
     exit 1
 fi
 
-if [ "$USE_MIRRORS" -eq 1 ]; then
-    ros_mirror="http://mirrors.ustc.edu.cn/ros/ubuntu"
-else
-    ros_mirror="http://packages.ros.org/ros/ubuntu"
-fi
+ros_mirror="http://mirrors.ustc.edu.cn/ros/ubuntu"
 test_url="${ros_mirror}/dists/${ubuntu_codename}/"
 
 # Check whether the ROS mirror provides packages for this Ubuntu codename

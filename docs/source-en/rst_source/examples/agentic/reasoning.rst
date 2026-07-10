@@ -6,42 +6,17 @@ GRPO training for Math Reasoning
    :height: 16px
    :class: inline-icon
 
-Train a Qwen-based reasoning model with GRPO on math data. Compared with supervised fine-tuning, RL encourages diverse reasoning paths while optimizing final-answer correctness.
+This document introduces how we train large language models (LLMs) for mathematical reasoning using reinforcement learning (RL) in the RLinf framework.
+Compared with supervised fine-tuning (SFT), RL encourages the model to explore diverse reasoning paths while prioritizing correct final answers.
 
-Overview
---------
-
-Use this recipe to train Qwen-based reasoning models with GRPO on math data.
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: Models
-      :text-align: center
-
-      Qwen2.5-1.5B and Qwen2.5-7B
-
-   .. grid-item-card:: Algorithm
-      :text-align: center
-
-      GRPO with token-level loss and minibatch early-stop
-
-   .. grid-item-card:: Data
-      :text-align: center
-
-      AReaL-boba math reasoning data
-
-   .. grid-item-card:: Hardware
-      :text-align: center
-
-      Multi-node Megatron training
+Our goal is to improve the model's ability to solve challenging math problems by optimizing both its reasoning process and its final answers.
 
 
 Dataset
 -------------
 
-We use the dataset from `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_.
-This dataset integrates data from DeepScaleR, Open-Reasoner-Zero, Light-R1, DAPO, NuminaMath (AoPS/Olympiad subsets), and ZebraLogic.
+We use the dataset from `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_.  
+This dataset integrates data from DeepScaleR, Open-Reasoner-Zero, Light-R1, DAPO, NuminaMath (AoPS/Olympiad subsets), and ZebraLogic.  
 Overly simple problems are filtered out to ensure dataset quality and effectiveness.
 
 An example training sample looks like:
@@ -98,12 +73,12 @@ To support different dataset formats, you can adjust the configuration as needed
   When the option is enabled, the raw dataset is processed through `tokenizer.apply_chat_template()` to format the prompt according to the model's chat template.
   After processing, the prompt will be converted into a string for input.
 
-How GRPO Works
---------------
+Algorithm
+---------
 
 We adopt GRPO (Group Relative Policy Optimization) with the following modifications:
 
-- Token-level loss: Instead of averaging loss over the entire response sequence, we compute the average over tokens, as in DAPO.
+- Token-level loss: Instead of averaging loss over the entire response sequence, we compute the average over tokens, as in DAPO.  
   This prevents excessively long responses from dominating training and reduces their gradient impact.
 
 - Minibatch early-stop: If the importance ratio within a minibatch becomes too large, we discard that minibatch to stabilize training.
@@ -113,19 +88,22 @@ Reward function:
 - +5 if the final boxed/numeric answer is correct;
 - -5 if incorrect.
 
-Run It
-------
+Running the Script
+---------------------
 
 **1. Key Parameters Configuration**
 
-Before launching, check the configuration file. For common cluster, runner, rollout, and data fields, see :doc:`Training configuration <../../reference/configuration>`.
+Before launching, check the configuration file. Key fields include:
+
+- Cluster setup: ``cluster.num_nodes`` (number of nodes).  
+- Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model.model_path`` (the path that saves base huggingface model), ``data.train_data_paths`` (the path that save training data), etc.  
 
 **2. Configuration File**
 
 Recommended configurations can be found in:
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
+- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``  
 
 **3. Launch Command**
 
@@ -150,28 +128,37 @@ Run the following commands to start the Ray cluster and begin training:
 
    sleep 10d
 
-Visualization and Results
--------------------------
+Results
+-------
 
-We trained both 1.5B and 7B models based on DeepSeek-R1-Distill-Qwen.
+We trained both 1.5B and 7B models based on DeepSeek-R1-Distill-Qwen.  
 
-After launch, monitor training with:
+After successfully launched your training, you can monitor the metrics with:
 
 .. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 
-For common metric meanings, see :doc:`Training metrics <../../reference/metrics>`. The following plots show training curves.
+Key metrics to track:
+
+- ``rollout/rewards``: Accuracy of model responses on training data. Higher scores normally suggest stronger reasoning ability.  
+- ``rollout/response_length``: Average response length for the training dataset. RL often causes verbosity, and DAPO-like strategies mitigate this problem.  
+- ``train/entropy_loss``: Representing the exploration ability of the model. Entropy should decrease and slowly converge.  
+
+Training Curve
+~~~~~~~~~~~~~~
+
+The following plots show training curves.
 
 .. raw:: html
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/1.5b-loss-curve.jpg" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/1.5b-loss-curve.jpg" style="width: 100%;"/>
        <p><em>MATH 1.5B</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/7b-loss-curve.jpg" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/7b-loss-curve.jpg" style="width: 100%;"/>
        <p><em>MATH 7B</em></p>
      </div>
    </div>
@@ -180,7 +167,7 @@ For common metric meanings, see :doc:`Training metrics <../../reference/metrics>
 Final Performance
 ~~~~~~~~~~~~~~~~~
 
-We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_.
+We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding :doc:`evaluation documentation <../../start/llm-eval>`.
 
 Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
 
@@ -277,5 +264,5 @@ Public Checkpoints
 
 We release trained models on Hugging Face for public use:
 
-- `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_
-- `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_
+- `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_  
+- `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_  

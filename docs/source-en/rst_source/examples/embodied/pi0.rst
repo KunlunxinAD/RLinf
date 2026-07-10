@@ -6,104 +6,109 @@ RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
    :height: 16px
    :class: inline-icon
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
-   :align: center
-   :width: 35%
+This example provides a complete guide to fine-tuning the 
+π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithms with reinforcement learning
+using the **RLinf** framework. It covers the entire process—from
+environment input, core algorithms, training script configuration to
+evaluation and visualization—along with reproducible commands and
+configuration snippets.
 
-   The π\ :sub:`0`\  / π\ :sub:`0.5`\  flow-based VLA models.
+For detailed technical report, please refer to the paper: `πRL: ONLINE RL FINE-TUNING FOR FLOW-BASED VISION-LANGUAGE-ACTION MODELS <https://arxiv.org/abs/2510.25889>`__.
 
-Fine-tune the **π**\ :sub:`0`\  and **π**\ :sub:`0.5`\  flow-based VLA models with
-reinforcement learning (PPO / GRPO) across several simulators using RLinf. For the full
-method, see the paper
-`πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__.
+The primary objective is to develop a model capable of performing
+robotic manipulation by:
 
-Overview
---------
+1. **Visual Understanding**: Processing RGB images from the robot’s
+   camera.
+2. **Language Comprehension**: Interpreting natural-language task
+   descriptions.
+3. **Action Generation**: Producing precise robotic actions (position,
+   rotation, gripper control).
+4. **Reinforcement Learning**: Optimizing the policy via the PPO with
+   environment feedback.
 
-RL-fine-tune π\ :sub:`0`\  / π\ :sub:`0.5`\  on LIBERO, ManiSkill, MetaWorld, and CALVIN with PPO or GRPO.
+--------------
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+Environment
+-----------
 
-   .. grid-item-card:: Environments
-      :text-align: center
+**LIBERO Environment**
 
-      LIBERO · ManiSkill · MetaWorld · CALVIN
+-  **Environment**: LIBERO simulation benchmark built on top of
+   *robosuite* (MuJoCo).
+-  **Task**: Command a 7-DoF robotic arm to perform a variety of
+   household manipulation skills (pick-and-place, stacking, opening
+   drawers, spatial rearrangement).
+-  **Observation**: RGB images (typical resolutions 128 × 128 or 224 ×
+   224) captured by off-screen cameras placed around the workspace.
+-  **Action Space**: 7-dimensional continuous actions
+   - 3D end-effector position control (x, y, z)
+   - 3D rotation control (roll, pitch, yaw)
+   - Gripper control (open / close)
 
-   .. grid-item-card:: Algorithms
-      :text-align: center
+**ManiSkill3 Environment**
 
-      PPO · GRPO
+-  **Environment**: ManiSkill3 simulation platform
+-  **Task**: Control a robotic arm to grasp various objects
+-  **Observation**: RGB images (224 × 224) from third-person camera
+-  **Action Space**: 7-dimensional continuous actions
+   - 3D position control (x, y, z)
+   - 3D rotation control (roll, pitch, yaw)
+   - Gripper control (open / close)
 
-   .. grid-item-card:: Tasks
-      :text-align: center
+**Task Description Format**
 
-      Spatial · Object · Goal · Long
+   π\ :sub:`0`\  and π\ :sub:`0.5`\  directly use the environment-provided natural-language
+   task description as the language model input.
 
-   .. grid-item-card:: Hardware
-      :text-align: center
+**Data Structure**
 
-      1 node · GPUs
+-  **Images**: Main-view and wrist-view RGB tensors, each of shape
+   ``[batch_size, 224, 224, 3]``
+-  **States**: In LIBERO, states include end-effector pose (position + orientation) and gripper state. In ManiSkill3, states are robot joint angles.
+-  **Task Descriptions**: Natural-language instructions
+-  **Rewards**: Sparse success/failure rewards
 
-| **You'll do:** install → download an SFT checkpoint → pick a config → launch ``run_embodiment.sh`` → watch ``env/success_once``.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint (steps below).
+--------------
 
-Tasks
-~~~~~
+Algorithm
+---------
 
-Select the model page by matching the environment, task family, and config or checkpoint artifact.
+**Core Algorithm Components**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 24 30 24
+1. **PPO (Proximal Policy Optimization)**
 
-   * - Environment
-     - Task / Suite
-     - Config / Weights
-     - Focus
-   * - LIBERO
-     - Spatial · Object · Goal · Long
-     - ``libero_spatial_ppo_openpi_pi05`` / ``libero_10_grpo_openpi_pi05``
-     - Fine-tune π0 / π0.5 on LIBERO manipulation suites.
-   * - ManiSkill3
-     - PickCube and related tasks
-     - ``maniskill_ppo_openpi_pi05``
-     - Fine-tune π0.5 on ManiSkill3 robot-control tasks.
-   * - MetaWorld
-     - MT50
-     - ``metaworld_50_ppo_openpi_pi05``
-     - Evaluate generalization across MetaWorld manipulation tasks.
-   * - CALVIN
-     - ABC-D
-     - ``calvin_abc_d_ppo_openpi_pi05``
-     - Train on long-horizon language-conditioned manipulation.
+   -  Advantage estimation using GAE (Generalized Advantage Estimation)
+   -  Policy clipping with ratio limits
+   -  Value function clipping
+   -  Entropy regularization
 
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
+2. **GRPO (Group Relative Policy Optimization)**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38
+   -  For every state / prompt the policy generates *G* independent
+      actions
+   -  Compute the advantage of each action by subtracting the group’s
+      mean reward.
 
-   * - Field
-     - Description
-   * - Observation
-     - Main-view and wrist-view RGB plus robot state from LIBERO, ManiSkill3, MetaWorld, or CALVIN.
-   * - Action
-     - 7-D continuous control for end-effector position, rotation, and gripper state.
-   * - Reward
-     - Environment success or shaped reward used by PPO / GRPO.
-   * - Prompt
-     - Environment-provided natural-language task description consumed by the VLA processor.
+Dependency Installation
+-----------------------
 
-π\ :sub:`0`\  / π\ :sub:`0.5`\  train with PPO (actor-critic; GAE, ratio clipping, value clipping, entropy regularization) or GRPO (group-relative advantages over *G* sampled actions).
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Installation
-------------
+.. code:: bash
 
-.. include:: _setup_common.rst
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Option 1: Docker Image**
+
+Use Docker image for the experiment.
 
 .. code:: bash
 
@@ -112,9 +117,9 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -135,8 +140,8 @@ Install dependencies directly in your environment by running the following comma
 
 --------------
 
-Download the Model
-------------------
+Model Download
+--------------
 
 Before starting training, you need to download the corresponding pretrained models. For example, for Spatial, Object, Goal task types in the LIBERO environment, you can download them as follows:
 
@@ -234,8 +239,8 @@ Of course, RLinf also provides pretrained models for other environments. The mod
 
 After downloading, please make sure to specify the model path correctly in your configuration file.
 
-Run It
-------
+Running Scripts
+---------------
 
 **1. Key Cluster Configuration**
 
@@ -297,7 +302,7 @@ interference, eliminating the need for offload functionality.
      action_env_dim: ${actor.model.action_dim}
      noise_method: "flow_sde" # flow_sde, flow_noise
      add_value_head: False
-     pi05: False
+     pi05: False 
      value_after_vlm: False
 
 - Set different flow-matching steps via ``num_steps``.
@@ -345,11 +350,11 @@ Compared to the standard task configuration, we have made the following modifica
 
 .. code:: yaml
 
-   env.train.rollout_epoch: 8 -> 2
-   env.train.total_num_envs: 64 -> 32
-   actor.micro_batch_size: 128 -> 64
-   actor.global_batch_size: 2048 -> 256
-   actor.optim.lr: 5e-6 -> 1e-6
+   rollout_epoch: 8 -> 2
+   total_num_envs: 64 -> 32
+   micro_batch_size: 128 -> 64
+   global_batch_size: 2048 -> 256
+   lr: 5e-6 -> 1e-6
    actor.enable_offload: False -> True
    rollout.enable_offload: False -> True
 
@@ -365,7 +370,7 @@ If you still encounter OOM issues under the minimum parameter configuration, we 
 **If OOM occurs during the rollout stage:**
 
 - Try replacing the rendering engine from ``egl`` to ``osmesa``
-- Further reduce ``env.train.total_num_envs`` from 32 to 16, but increase ``env.train.rollout_epoch`` from 2 to 4 to ensure the total number of environments per rollout round remains consistent
+- Further reduce ``total_num_envs`` from 32 to 16, but increase ``rollout_epoch`` from 2 to 4 to ensure the total number of environments per rollout round remains consistent
 - Check if actor's ``enable_offload`` is enabled, and set it to ``True`` if it is ``False``
 
 **If OOM occurs during the actor stage:**
@@ -381,13 +386,13 @@ If you still encounter OOM issues under the minimum parameter configuration, we 
 
 For models after SFT or RL training, we provide two evaluation methods:
 
-- Use RLinf's unified evaluation script; see :doc:`evaluation <../../evaluations/index>` for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
+- Use RLinf's unified evaluation script, refer to the `VLA Evaluation Documentation <https://rlinf.readthedocs.io/en/latest/rst_source/start/vla-eval.html>`__ for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
 
 .. note::
 
    ``Metaworld`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
 
-- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/standalone_eval_scripts/openpi/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
+- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
 
 **3. Configuration Files**
 
@@ -434,10 +439,26 @@ Visualization and Results
 
 --------------
 
-**2. Key Metrics**
+**2. Key Monitoring Metrics**
 
-Watch **``env/success_once``** for the task success rate. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
+-  **Training Metrics**
+
+   -  ``actor/loss``: Policy loss
+   -  ``actor/value_loss``: Value function loss (PPO)
+   -  ``actor/grad_norm``: Gradient norm
+   -  ``actor/approx_kl``: KL divergence between old and new policies
+   -  ``actor/pg_clipfrac``: Policy clipping ratio
+   -  ``actor/value_clip_ratio``: Value loss clipping ratio (PPO)
+
+-  **Rollout Metrics**
+
+   -  ``rollout/returns_mean``: Average episode return
+   -  ``rollout/advantages_mean``: Mean advantage value
+
+-  **Environment Metrics**
+
+   -  ``env/episode_len``: Average episode length
+   -  ``env/success_once``: Task success rate
 
 --------------
 
@@ -476,10 +497,10 @@ The results achieved through RL training are shown below:
    :header-rows: 1
 
    * - Model
-     - Spatial
+     - Spatial 
      - Object
-     - Goal
-     - Long
+     - Goal 
+     - Long 
      - Average
      - Δ Avg.
 
@@ -511,10 +532,10 @@ The results achieved through RL training are shown below:
    :header-rows: 1
 
    * - Model
-     - Spatial
+     - Spatial 
      - Object
-     - Goal
-     - Long
+     - Goal 
+     - Long 
      - Average
      - Δ Avg.
 
@@ -544,8 +565,8 @@ The results achieved through RL training are shown below:
 
 MetaWorld Results
 ~~~~~~~~~~~~~~~~~
-For MetaWorld results, please check :doc:`MetaWorld Page <metaworld>`.
+For MetaWorld results, please check `MetaWorld Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/metaworld.html>`__.
 
 CALVIN Results
 ~~~~~~~~~~~~~~~~~
-For CALVIN results, please check :doc:`CALVIN Page <calvin>`.
+For CALVIN results, please check `CALVIN Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/calvin.html>`__.

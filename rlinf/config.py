@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
 
 import torch
 import torch.nn.functional as F
+import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
@@ -81,7 +82,6 @@ class SupportedModel:
 SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
-SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
@@ -99,18 +99,11 @@ SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
 SupportedModel.ABOT_M0 = SupportedModel.register("abot_m0", force=True)
 SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
 SupportedModel.CFG_MODEL = SupportedModel.register("cfg_model", force=True)
-SupportedModel.RECAP_VALUE_MODEL = SupportedModel.register(
-    "recap_value_model", force=True
-)
-SupportedModel.STEAM_VALUE_MODEL = SupportedModel.register(
-    "steam_value_model", force=True
-)
+SupportedModel.VALUE_MODEL = SupportedModel.register("value_model", force=True)
 
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
-SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
-SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 
 EMBODIED_MODEL = set(
     {
@@ -129,11 +122,8 @@ EMBODIED_MODEL = set(
         SupportedModel.LINGBOTVLA,
         SupportedModel.ABOT_M0,
         SupportedModel.RESNET_REWARD,
-        SupportedModel.GR00T_N1D6,
-        SupportedModel.GR00T_N1D7,
         SupportedModel.CFG_MODEL,
-        SupportedModel.RECAP_VALUE_MODEL,
-        SupportedModel.STEAM_VALUE_MODEL,
+        SupportedModel.VALUE_MODEL,
     }
 )
 
@@ -141,7 +131,6 @@ EMBODIED_MODEL = set(
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = [
     "embodied",
-    "embodied_eval",
     "reasoning",
     "reasoning_eval",
     "coding_online_rl",
@@ -819,101 +808,16 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_embodied_cfg(cfg):
-    only_eval = (
-        cfg.runner.get("only_eval", False)
-        or cfg.runner.get("task_type") == "embodied_eval"
-    )
-    model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
-    algorithm_cfg = cfg.get("algorithm", {}) or {}
-    model_type = SupportedModel(model_cfg.model_type)
+    model_type = SupportedModel(cfg.actor.model.model_type)
     assert model_type in EMBODIED_MODEL, (
-        f"Model type: '{model_cfg.model_type}' is not an embodied model. "
+        f"Model type: '{cfg.actor.model.model_type}' is not an embodied model. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
-    with open_dict(cfg):
-        cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
-    enable_eval = cfg.runner.val_check_interval > 0 or only_eval
-
-    with open_dict(cfg):
-        if enable_eval:
-            assert cfg.env.get("eval", None) is not None, (
-                "env.eval config is required when runner.val_check_interval > 0, "
-                "runner.only_eval=True, or runner.task_type=embodied_eval."
-            )
-            cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
-        if algorithm_cfg.get("rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.rollout_epoch is deprecated; use env.train.rollout_epoch instead."
-            )
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.rollout_epoch = cfg.env.train.get(
-                    "rollout_epoch", algorithm_cfg.rollout_epoch
-                )
-        if algorithm_cfg.get("eval_rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.eval_rollout_epoch is deprecated; use env.eval.rollout_epoch instead."
-            )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.rollout_epoch = cfg.env.eval.get(
-                    "rollout_epoch", algorithm_cfg.eval_rollout_epoch
-                )
-        if cfg.env.get("train", None) is not None:
-            cfg.env.train.rollout_epoch = cfg.env.train.get("rollout_epoch", 1)
-        if cfg.env.get("eval", None) is not None:
-            cfg.env.eval.rollout_epoch = cfg.env.eval.get("rollout_epoch", 1)
-        if cfg.rollout.get("sampling_params", None) is None:
-            if algorithm_cfg.get("sampling_params", None) is not None:
-                logging.warning(
-                    "algorithm.sampling_params is deprecated for embodied tasks; use "
-                    "rollout.sampling_params instead."
-                )
-                cfg.rollout.sampling_params = OmegaConf.create(
-                    OmegaConf.to_container(algorithm_cfg.sampling_params, resolve=False)
-                )
-        elif algorithm_cfg.get("sampling_params", None) is not None:
-            logging.warning(
-                "algorithm.sampling_params is deprecated for embodied tasks; use "
-                "rollout.sampling_params instead."
-            )
-        sampling_params = cfg.rollout.get("sampling_params", None)
-        if sampling_params is not None:
-            sampling_params.do_sample = sampling_params.get("do_sample", True)
-            sampling_params.temperature_train = sampling_params.get(
-                "temperature_train", sampling_params.get("temperature", 1.0)
-            )
-            sampling_params.temperature_eval = sampling_params.get(
-                "temperature_eval", sampling_params.get("temperature", 0.0)
-            )
-            sampling_params.top_k = sampling_params.get("top_k", 0)
-            sampling_params.top_p = sampling_params.get("top_p", 1.0)
-            sampling_params.repetition_penalty = sampling_params.get(
-                "repetition_penalty", 1.0
-            )
-            if sampling_params.get("max_new_tokens", None) is None:
-                sampling_params.max_new_tokens = cfg.rollout.get("max_new_tokens", None)
-        if algorithm_cfg.get("length_params", None) is not None:
-            logging.warning(
-                "algorithm.length_params is deprecated for embodied tasks; use "
-                "rollout.sampling_params.max_new_tokens instead."
-            )
-            if sampling_params is None:
-                cfg.rollout.sampling_params = OmegaConf.create({})
-                sampling_params = cfg.rollout.sampling_params
-            if sampling_params.get("max_new_tokens", None) is None:
-                sampling_params.max_new_tokens = algorithm_cfg.length_params.get(
-                    "max_new_token", None
-                )
-
-    if not only_eval and cfg.runner.get("use_training_pipeline", False):
-        assert cfg.algorithm.adv_type == "gae", (
-            "algorithm.adv_type only supports 'gae' now"
-            "when runner.use_training_pipeline is True."
-        )
 
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
     # Check that actor_critic loss requires value_head (training only; eval does not need critic)
-    if not only_eval and (
+    if not cfg.runner.get("only_eval", False) and (
         cfg.algorithm.loss_type == "actor_critic"
         or cfg.algorithm.loss_type == "decoupled_actor_critic"
     ):
@@ -929,11 +833,7 @@ def validate_embodied_cfg(cfg):
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
-    if enable_eval:
-        assert cfg.env.get("eval", None) is not None, (
-            "env.eval config is required when runner.val_check_interval > 0, "
-            "runner.only_eval=True, or runner.task_type=embodied_eval."
-        )
+    if cfg.runner.val_check_interval > 0 or cfg.runner.get("only_eval", False):
         assert cfg.env.eval.total_num_envs > 0, (
             "Total number of parallel environments for evaluation must be greater than 0"
         )
@@ -956,12 +856,13 @@ def validate_embodied_cfg(cfg):
             "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
         assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
+            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            == 0
         ), (
             "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
 
-    if not only_eval:
+    if not cfg.runner.get("only_eval", False):
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )
@@ -984,7 +885,9 @@ def validate_embodied_cfg(cfg):
             "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
         assert (
-            cfg.env.train.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
+            cfg.env.train.max_steps_per_rollout_epoch
+            % cfg.actor.model.num_action_chunks
+            == 0
         ), (
             "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
@@ -999,20 +902,10 @@ def validate_embodied_cfg(cfg):
         # pressure during the overlap period.
         cfg.runner.overlap_env_bootstrap = bool(
             cfg.runner.get("overlap_env_bootstrap", False)
-        ) and not cfg.env.get("train", {}).get("enable_offload", False)
-        train_env_type = (
-            SupportedEnvType(cfg.env.train.env_type)
-            if cfg.env.get("train", None) is not None
-            else None
-        )
-        eval_env_type = (
-            SupportedEnvType(cfg.env.eval.env_type)
-            if cfg.env.get("eval", None) is not None
-            else None
-        )
+        ) and not cfg.env.train.get("enable_offload", False)
         if (
-            train_env_type == SupportedEnvType.MANISKILL
-            or eval_env_type == SupportedEnvType.MANISKILL
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
         ):
 
             def get_robot_control_mode(robot: str):
@@ -1031,22 +924,34 @@ def validate_embodied_cfg(cfg):
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.init_params.control_mode = get_robot_control_mode(
-                    model_cfg.policy_setup
-                )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.init_params.control_mode = get_robot_control_mode(
-                    model_cfg.policy_setup
-                )
+            cfg.env.train.init_params.control_mode = get_robot_control_mode(
+                cfg.actor.model.policy_setup
+            )
+            cfg.env.eval.init_params.control_mode = get_robot_control_mode(
+                cfg.actor.model.policy_setup
+            )
         elif (
-            train_env_type == SupportedEnvType.BEHAVIOR
-            or eval_env_type == SupportedEnvType.BEHAVIOR
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.BEHAVIOR
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.BEHAVIOR
         ):
-            if cfg.env.get("train", None) is not None:
-                assert cfg.env.train.base_config_name == "r1pro_behavior", (
-                    f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
-                )
+            import omnigibson as og
+
+            assert cfg.env.train.base_config_name == "r1pro_behavior", (
+                f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
+            )
+            # Load the pre-selected configuration and set the online_sampling flag
+            config_filename = os.path.join(
+                og.example_config_path, "r1pro_behavior.yaml"
+            )
+            omnigibson_cfg = yaml.load(
+                open(config_filename, "r"), Loader=yaml.FullLoader
+            )
+            omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
+            with open_dict(omnigibson_cfg):
+                omnigibson_cfg.robots[0].obs_modalities = ["rgb", "depth", "proprio"]
+            cfg.env.train.omnigibson_cfg = omnigibson_cfg
+            cfg.env.eval.omnigibson_cfg = omnigibson_cfg
+
     return cfg
 
 
@@ -1112,6 +1017,12 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
 
     with open_dict(cfg):
         cfg.runner.only_eval = bool(runner_only_eval)
+
+        # Offline RL only needs env.eval for evaluation interaction.
+        if cfg.env.get("train", None) is None:
+            cfg.env.train = OmegaConf.create(
+                OmegaConf.to_container(cfg.env.eval, resolve=True)
+            )
 
     if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
         component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -1180,40 +1091,18 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
 
             cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
 
-        _validate_steam_ensemble_cfg(cfg.actor)
-
     return cfg
-
-
-def _validate_steam_ensemble_cfg(actor_cfg: DictConfig) -> None:
-    """Validate STEAM ensemble-specific settings."""
-    model_cfg = actor_cfg.get("model", None)
-    if model_cfg is None or model_cfg.get("model_type", None) != "steam_value_model":
-        return
-
-    # Import lazily to avoid a circular dependency:
-    # rlinf.config -> rlinf.models.embodiment... -> rlinf.models -> rlinf.config
-    from rlinf.models.embodiment.value_model.steam.configuration import (
-        validate_steam_ensemble_settings,
-    )
-
-    try:
-        ensemble_size = validate_steam_ensemble_settings(
-            ensemble_size=model_cfg.get("ensemble_size", 1),
-            micro_batch_size=actor_cfg.micro_batch_size,
-            global_batch_size=actor_cfg.global_batch_size,
-        )
-    except ValueError as exc:
-        raise AssertionError(str(exc)) from exc
-
-    with open_dict(model_cfg):
-        model_cfg.ensemble_size = ensemble_size
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
+
+    if cfg.algorithm.recompute_logprobs and cfg.rollout.return_logprobs:
+        assert cfg.algorithm.get("importance_sampling_fix", False), (
+            "Importance sampling fix must be enabled if both `algorithm.recompute_logprobs` and `rollout.return_logprobs` are True."
+        )
 
     with open_dict(cfg):
         cfg.algorithm.training_batch_size_per_gpu = cfg.algorithm.get(
@@ -1325,21 +1214,22 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.per_worker_log_path = os.path.join(
                 cfg.runner.logger.log_path, "worker_logs"
             )
-        profiling_cfg = cfg.cluster.get("profiling", None)
-        if profiling_cfg is not None and bool(profiling_cfg.get("enabled", True)):
-            if not profiling_cfg.get("output_dir", None):
-                cfg.cluster.profiling.output_dir = os.path.abspath(
-                    os.path.join(
-                        cfg.runner.logger.log_path,
-                        cfg.runner.logger.experiment_name,
-                        "profiling",
-                    )
+        cfg.runner.nsight_output_path = None
+        nsight_cfg = cfg.cluster.get("nsight", None)
+        if nsight_cfg is not None and bool(nsight_cfg.get("enabled", True)):
+            cfg.runner.nsight_output_path = os.path.abspath(
+                os.path.join(
+                    cfg.runner.logger.log_path,
+                    cfg.runner.logger.experiment_name,
+                    "nsights",
                 )
+            )
 
     # Init cluster
     Cluster(
         cluster_cfg=cfg.cluster,
         distributed_log_dir=cfg.runner.per_worker_log_path,
+        nsight_output_dir=cfg.runner.nsight_output_path,
     )
 
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
@@ -1347,11 +1237,6 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     )
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
-    elif cfg.runner.task_type == "embodied_eval":
-        with open_dict(cfg):
-            cfg.runner.only_eval = True
-        cfg = validate_embodied_cfg(cfg)
-        return cfg
     elif cfg.runner.task_type == "reasoning":
         cfg = validate_reasoning_cfg(cfg)
     elif cfg.runner.task_type == "coding_online_rl":

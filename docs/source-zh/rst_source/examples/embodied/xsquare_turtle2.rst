@@ -1,84 +1,79 @@
 XSquare Turtle2 真机强化学习
-========================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
-   :align: center
-   :width: 80%
+==============================
 
-   用于 SAC/CNN 真机按键训练的 XSquare Turtle2 双臂机器人。
+本文档给出在 RLinf 框架内，基于 **XSquare Turtle2** 双臂机器人平台启动真机强化学习训练任务的完整指南。
 
-在 XSquare Turtle2 双臂机器人上训练真机策略。你将进入厂商控制容器，安装 RLinf 依赖，设置按键任务目标位姿，并在机器人节点与 GPU 节点上启动 SAC/CNN 训练。
+主要目标是让模型具备以下能力：
 
-概览
-----------------------------------------
+1. **视觉理解**：处理来自最多三个机载相机的 RGB 图像。
+2. **动作生成**：为一条或两条机械臂产生精确的末端执行器增量动作（位置、旋转及夹爪控制）。
+3. **强化学习**：结合真实环境反馈，使用 SAC 优化策略。
 
-在 XSquare Turtle2 上训练用于按键任务的视觉 SAC 策略。
+环境
+----
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+**真实世界环境**
 
-   .. grid-item-card:: 模型
-      :text-align: center
+- **机器人**：XSquare Turtle2 双臂桌面机器人，支持最多 2 条机械臂（左臂 ID ``0``，右臂 ID ``1``）以及最多 3 个 RGB 相机（ID ``0``、``1``、``2``）。
+- **任务**：目前支持**按键按压**任务（``ButtonEnv``）：
 
-      CNN policy
+  - 机械臂末端执行器向下运动，按压位于目标位姿处的按键。
+  - 随机复位时加入 ±5 cm 位置噪声和 ±20° 姿态噪声，以提升任务难度。
+  - 任务描述字符串：*"Press the button with the end-effector."*
 
-   .. grid-item-card:: 算法
-      :text-align: center
+- **观测（Observation）**：
 
-      SAC · Cross-Q · RLPD
+  - 来自一个或多个相机的 RGB 图像（128 × 128），以 ``frames/wrist_<k>`` 形式返回。
+  - TCP 位姿：每条激活机械臂的位置（xyz）与四元数（xyzw），拼接为一维向量。
 
-   .. grid-item-card:: 任务
-      :text-align: center
+    - 单臂：``[batch_size, 7]``
+    - 双臂：``[batch_size, 14]``
 
-      Button pressing
+- **动作空间（Action Space）**：每条机械臂 7 维连续动作，双臂叠加：
 
-   .. grid-item-card:: 硬件
-      :text-align: center
+  - 三维增量位置（Δx, Δy, Δz）
+  - 三维增量姿态（Δroll, Δpitch, Δyaw）
+  - 夹爪宽度指令（开/合）
 
-      XSquare Turtle2 · 1–2 arms · cameras
+  单臂：``(7,)``；双臂：``(14,)``；取值归一化至 ``[-1, 1]``。
 
-| **你将完成:** 进入厂商容器 → 安装 RLinf env → 设置目标位姿 → 测试 dummy 配置 → 训练.
-| **前置条件:** :doc:`安装 </rst_source/start/installation>` · XSquare Docker/controller stack · 局域网.
+**数据结构**
 
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- **Images**：RGB 张量 ``[batch_size, 128, 128, 3]``
+- **Actions**：归一化连续值，每维度取值范围 ``[-1, 1]``
+- **Rewards**：成功时返回 ``1.0``（所有激活机械臂均到达目标位置阈值内），否则返回 ``0.0``；可选稠密指数奖励
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
 
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - Dummy check
-     - ``realworld_dummy_turtle2_sac_cnn``
-     - 在无硬件运动情况下验证配置和集群连通。
-   * - Training
-     - ``realworld_button_turtle2_sac_cnn``
-     - 使用一条或两条活动机械臂训练按键任务。
-   * - Monitoring
-     - TensorBoard logs
-     - 跟踪 reward、return 与 replay-buffer 统计。
+算法
+----
 
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**核心算法组件**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
+1. **SAC（Soft Actor-Critic）**
 
-   * - 字段
-     - 说明
-   * - Observation
-     - 最多三路 RGB 相机流，以及每条活动机械臂的 TCP 位姿。
-   * - Action
-     - 每条机械臂 7 维连续增量位姿与夹爪命令。
-   * - Reward
-     - 按键成功时为 ``1.0``；可选指数稠密 shaping。
-   * - Prompt
-     - ``Press the button with the end-effector.``
+   - 通过 Bellman 公式和熵正则化学习 Q 值。
+   - 学习策略网络以最大化熵正则化的 Q 值。
+   - 自动调节温度参数（``alpha``）以平衡探索与利用。
+
+2. **Cross-Q** （可选）
+
+   - SAC 的一种变体，去除了目标 Q 网络。
+   - 在一个批次中连接当前和下一个观测，结合 BatchNorm 实现稳定的 Q 训练。
+
+3. **RLPD（Reinforcement Learning with Prior Data）** （可选）
+
+   - 在在线 SAC 中融合离线示范数据。
+   - 高更新-数据比以充分利用已采集数据。
+
+4. **CNN 策略网络**
+
+   - 基于 ResNet 的视觉编码器，处理 RGB 输入。
+   - MLP 层融合图像特征与本体感知状态，输出动作。
+   - 独立 Q-head 实现 Critic 功能。
+
 
 硬件环境搭建
-----------------------------------------
+------------
 
 真机实验需要以下硬件：
 
@@ -89,16 +84,16 @@ XSquare Turtle2 真机强化学习
 
 .. warning::
 
-  请确保训练节点与机器人控制节点处于同一局域网中。
+  请确保训练节点与机器人控制节点处于**同一局域网**中。
 
 
-安装
-----------------------------------------
+依赖安装
+--------
 
 控制节点与训练 / Rollout 节点需要安装不同的软件依赖。
 
 机器人控制节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~
 
 XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装之以前，确保您已进入Xsquare的官方Docker容器**。请联系`XSquare <https://x2robot.com>`_获取准确的Docker镜像和启动说明。
 
@@ -120,10 +115,10 @@ XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装
    source .venv/bin/activate
 
 训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
 
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+a. 克隆 RLinf 仓库
+^^^^^^^^^^^^^^^^^^^
 
 .. code:: bash
 
@@ -132,8 +127,8 @@ A. 克隆 RLinf 仓库
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-B. 安装依赖
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+b. 安装依赖
+^^^^^^^^^^^
 
 **方式 1：Docker 镜像**
 
@@ -145,9 +140,9 @@ B. 安装依赖
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # 为了提高国内下载速度，也可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 **方式 2：自定义环境**
 
@@ -159,8 +154,8 @@ B. 安装依赖
    source .venv/bin/activate
 
 
-下载模型
-----------------------------------------
+模型下载
+--------
 
 在开始训练之前，需要下载预训练的 ResNet CNN 骨干网络：
 
@@ -179,11 +174,11 @@ B. 安装依赖
 下载完成后，请在对应的配置 YAML 文件中正确填写 ``model_path`` 字段。
 
 
-运行
-----------------------------------------
+运行实验
+--------
 
 前置准备
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
 
 **获取任务目标末端位姿**
 
@@ -193,8 +188,8 @@ B. 安装依赖
 位姿以欧拉角格式存储：``[x, y, z, rz, ry, rx]`` （XSquare 约定）。
 如使用双臂模式，需为两条机械臂分别记录目标位姿。
 
-集群设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+集群配置
+~~~~~~~~
 
 在正式开始实验之前，需要先正确搭建 Ray 集群。
 
@@ -236,7 +231,7 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
 可以通过执行 ``ray status`` 检查集群是否已正确启动。
 
 配置文件
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
 
 根据实际设置修改配置文件 ``examples/embodiment/config/realworld_button_turtle2_sac_cnn.yaml``。
 
@@ -286,11 +281,11 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
     model:
       model_path: "/path/to/RLinf-ResNet10-pretrained"
 
-对于按键按压任务，``target_ee_pose`` 同时定义了成功判断的阈值位置和复位位置
+对于**按键按压**任务，``target_ee_pose`` 同时定义了成功判断的阈值位置和复位位置
 （机械臂复位时会移动到目标位置 Z 轴方向稍高处）。
 
 检查环境（可选）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
 
 在正式启动实验前，可以使用 dummy 模式验证集群和模型流水线是否正常：
 
@@ -303,8 +298,8 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
 
    bash examples/embodiment/run_realworld_async.sh realworld_dummy_turtle2_sac_cnn
 
-运行
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+运行实验
+~~~~~~~~
 
 完成上述检查后，即可在 head 节点上启动真机训练实验：
 
@@ -314,7 +309,7 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
 
 
 可视化与结果
-----------------------------------------
+------------
 
 **1. TensorBoard 日志**
 

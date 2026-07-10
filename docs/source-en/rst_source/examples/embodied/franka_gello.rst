@@ -1,84 +1,47 @@
-Using GELLO with Franka
-=======================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
-   :align: center
-   :width: 80%
+Real-World Franka with GELLO Teleoperation
+============================================
 
-   GELLO joint-level teleoperation device used to collect Franka demonstrations.
+This guide explains how to set up and use the **GELLO** teleoperation device
+with the Franka real-world environment in RLinf. It extends the base
+:doc:`franka` documentation with hardware-specific installation,
+configuration, and verification steps.
 
-Use GELLO as a joint-level teleoperation device for Franka data collection. You'll install ``gello_teleop``, verify the serial device, update collection configs, and monitor saved episodes.
+.. note::
 
-Overview
---------
+   If you have not read the base Franka guide yet, please start with
+   :doc:`franka` first. This page only covers the **additional** steps
+   required for the GELLO hardware.
 
-Collect Franka demonstrations with joint-level GELLO control instead of SpaceMouse.
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+Hardware Overview
+-----------------
 
-   .. grid-item-card:: Models
-      :text-align: center
+`GELLO <https://github.com/wuphilipp/gello_software>`_ is a joint-level
+teleoperation device that mirrors the kinematic structure of the Franka arm.
+It provides more intuitive and precise control than a SpaceMouse, with
+native gripper support.
 
-      Downstream CNN/OpenPI policies
-
-   .. grid-item-card:: Algorithms
-      :text-align: center
-
-      Teleop collection · SFT/RL downstream
-
-   .. grid-item-card:: Tasks
-      :text-align: center
-
-      Franka demonstration collection
-
-   .. grid-item-card:: Hardware
-      :text-align: center
-
-      Franka · GELLO · gripper
-
-| **You'll do:** install GELLO deps → grant serial permissions → test expert stream → run collection.
-| **Prerequisites:** :doc:`franka` · GELLO hardware · Dynamixel permissions.
-
-Tasks
-~~~~~
+A typical GELLO deployment connects the device to the **controller node**
+(usually the NUC or the machine physically connected to the robot) via a
+USB serial adapter (FTDI).
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 20 40 40
 
-   * - Task
-     - Config / entry point
-     - Description
-   * - GELLO test
-     - ``gello_expert``
-     - Verify live joint and gripper readings.
-   * - Collection
-     - ``realworld_collect_data_gello``
-     - Save successful demonstrations from GELLO teleoperation.
-   * - Monitoring
-     - ``collect_monitor.py``
-     - Follow Ray worker collection progress from logs.
+   * - Node
+     - Role
+     - Hardware
+   * - **GPU server** (node 0)
+     - Actor, rollout, env worker; camera capture
+     - NVIDIA GPU (e.g. RTX 4090), RealSense cameras
+   * - **NUC** (node 1)
+     - FrankaController, GELLO teleoperation
+     - Franka arm, GELLO device (USB-FTDI)
 
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
-
-   * - Field
-     - Description
-   * - Observation
-     - Same camera/state layout as the target Franka collection config.
-   * - Action
-     - GELLO joint readings converted to Franka target pose or joint action.
-   * - Reward
-     - Collection success flag or downstream task reward.
-   * - Prompt
-     - Inherited from the downstream Franka task config.
-
-Installation
-------------
+GELLO Software Installation
+------------------------------
 
 GELLO depends on two packages that must be installed **in order**:
 
@@ -89,27 +52,17 @@ Both packages should be installed on the node that runs the GELLO device
 (typically the NUC / controller node).
 
 1. Install ``gello`` (gello_software)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Choose a directory to install the GELLO software, then clone the repository
-and initialize only the **Dynamixel SDK** submodule:
+and initialize its submodules (which include the **Dynamixel SDK**):
 
 .. code-block:: bash
 
    cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   git submodule update --init third_party/DynamixelSDK
-
-.. note::
-
-   ``gello_software`` also registers ``third_party/mujoco_menagerie`` (a
-   large repository of robot MJCF assets used only by the upstream mujoco
-   demo scripts). RLinf's GELLO teleop path goes through
-   ``gello-teleop`` which ships its own Franka MJCF, so the menagerie
-   submodule is not needed. ``git submodule update --init <path>``
-   registers and clones only the requested submodule; a plain
-   ``git submodule init`` would also queue the menagerie.
+   git submodule init && git submodule update
 
 Install the ``gello`` package and the **Dynamixel SDK** (bundled as a
 third-party submodule):
@@ -139,11 +92,17 @@ DynamixelRobotConfig, and port mapping), refer to the
 `gello_software README <https://github.com/wuphilipp/gello_software#readme>`_.
 
 2. Install ``gello-teleop``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``gello-teleop`` wraps the ``gello`` driver with Franka forward kinematics
 (using dm_control/MuJoCo) and a teleoperation agent interface. Install it
-as an editable checkout:
+directly from the GitHub repository:
+
+.. code-block:: bash
+
+   pip install git+https://github.com/RLinf/gello-teleop.git
+
+Or, if you prefer an editable installation:
 
 .. code-block:: bash
 
@@ -151,9 +110,16 @@ as an editable checkout:
    cd gello-teleop
    pip install -e .
 
+To also install the ``gello`` dependency automatically (if not already
+installed separately):
+
+.. code-block:: bash
+
+   pip install "gello-teleop[gello] @ git+https://github.com/RLinf/gello-teleop.git"
+
 
 3. Set up the serial device
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Plug the GELLO device into the controller node via the USB-FTDI adapter.
 Identify the serial port:
@@ -179,15 +145,14 @@ Grant permission:
    devices are plugged in.
 
 4. Verify the GELLO device
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Run the built-in RLinf test script to confirm that the GELLO device is
-communicating correctly and producing valid TCP target readings:
+Run the built-in test script to confirm that the GELLO device is
+communicating correctly and producing valid joint readings:
 
 .. code-block:: bash
 
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.envs.realworld.common.gello.gello_expert \
+   python -m gello_teleop.gello_expert \
        --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
 You should see continuously updating output like:
@@ -200,8 +165,8 @@ If the output is updating as you move the GELLO device, the installation
 is successful.
 
 
-Configuration File
-------------------
+YAML Configuration
+-------------------
 
 To use GELLO for data collection, use the config file
 ``examples/embodiment/config/realworld_collect_data_gello.yaml``.
@@ -236,31 +201,6 @@ The key differences from the standard SpaceMouse config are:
 
 For full data collection instructions, refer to the
 **Data Collection with GELLO** section in :doc:`franka`.
-
-
-Run It
-------
-
-Because the collector runs as a Ray worker, its stdout is batched by
-Ray's log monitor, which breaks ``tqdm``'s in-place ``\r`` refresh.
-To get a live progress bar, run ``toolkits/realworld_check/collect_monitor.py``
-in a separate terminal — it tails the collector log and renders a
-``tqdm`` bar that surfaces success count, the latest keyboard events,
-and discarded episodes.
-
-.. code-block:: bash
-
-   # terminal 1 — launch (stdout tee'd to a log file)
-   bash examples/embodiment/collect_data.sh \
-       realworld_collect_data_gello_joint_dual_franka 2>&1 \
-       | tee logs/collect.log
-
-   # terminal 2 — live bar (waits for the log file to appear if needed)
-   python toolkits/realworld_check/collect_monitor.py logs/collect.log
-
-The monitor replays the existing log on startup so episodes saved before
-it launched are reflected in the bar's initial position; pass
-``--no-replay`` to tail from EOF instead.
 
 
 Cluster Setup Notes

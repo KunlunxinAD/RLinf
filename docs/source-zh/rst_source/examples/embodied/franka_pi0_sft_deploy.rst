@@ -1,87 +1,21 @@
-在 Franka 上运行 Pi0 SFT
-================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
-   :align: center
-   :width: 80%
+Franka真机Pi0监督微调与部署全流程
+=====================================
 
-   用于 Franka bin-relocation 实验的 OpenPI π₀ SFT 与部署流程。
+本文档介绍如何在 RLinf 框架中完成 **Bin-relocation** 任务的真机全流程演示，
+该任务会将目标物体从起点位置搬运到终点位置（放入盘子视为成功完成任务）。
+涵盖从真实世界采集专家数据、SFT 训练 Pi0，到策略真机部署的完整步骤。
 
-使用 OpenPI π₀ 端到端运行 Bin-relocation 流程：采集 Franka 数据，转换为 LeRobot 风格数据集，计算归一化统计，执行 SFT，并在真机硬件上部署 checkpoint。
+主要流程如下：
 
-概览
-----------------------------------------
+1. **数据采集**：使用空间鼠标遥操作采集成功示范数据（LeRobot 格式）。
+2. **SFT 训练**：基于 Pi0 模型在全量参数模式下进行监督微调。
+3. **真机部署**：将训练好的策略在真实机器人上评估运行。
 
-创建 Franka 真机数据集，微调 π₀，并部署结果。
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: 模型
-      :text-align: center
-
-      OpenPI π₀
-
-   .. grid-item-card:: 算法
-      :text-align: center
-
-      SFT · eval-only deployment
-
-   .. grid-item-card:: 任务
-      :text-align: center
-
-      Bin relocation · generic SFT env
-
-   .. grid-item-card:: 硬件
-      :text-align: center
-
-      Franka · cameras · gripper
-
-| **你将完成:** 获取目标位姿 → 采集数据 → 计算 norm stats → 运行 SFT → 真机评测.
-| **前置条件:** :doc:`franka` · :doc:`sft_openpi` · OpenPI base checkpoint · real-world dataset path.
-
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
-
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - Data conversion
-     - ``pi0_realworld``
-     - 用 OpenPI 数据格式表示 Franka 数据。
-   * - SFT
-     - ``realworld_sft_openpi``
-     - 在 Franka 真机数据上微调 π₀。
-   * - Deployment
-     - ``realworld_pnp_eval`` / ``realworld_eval``
-     - 在真实机器人上运行 eval-only 部署。
-
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
-
-   * - 字段
-     - 说明
-   * - Observation
-     - 映射到 OpenPI 数据键的真机相机帧。
-   * - Action
-     - 由 ``pi0_realworld`` metadata 选择的 Franka 动作格式。
-   * - Reward
-     - 评测成功信号或操作员观察到的部署结果。
-   * - Prompt
-     - 保存在 SFT 数据集/配置中的任务文本。
-
-安装
-----------------------------------------
+硬件与软件环境准备
+---------------------
 
 硬件要求
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
 - **机械臂**：Franka Emika Panda 机械臂。
 - **相机**：Intel RealSense 相机（腕部相机用于观测）。
@@ -95,7 +29,7 @@
    请参考 :doc:`franka` 中的「硬件环境搭建」与「依赖安装」章节。
 
 软件依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
 **控制节点** （数据采集）需要安装 Franka 控制相关依赖，可参考 :doc:`franka` 依赖安装部分。
 
@@ -109,24 +43,24 @@
 
 .. note::
 
-   **训练 / Rollout 节点依赖安装注意事项**
+   **训练 / Rollout 节点依赖安装注意事项** 
    注意在 '--model' 参数中指定 'openpi' 而不是 'openvla'。
 
 环境配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
 数据采集、训练和部署均依赖 Franka 真机环境配置模板
 ``examples/embodiment/config/env/realworld_bin_relocation.yaml``。
 该配置定义了 Bin-relocation 任务的关键参数，包括末端位姿限制、成功判定阈值等。
 你可以在此基础上根据实际任务调整 ``override_cfg`` 中的字段。
 
-运行
-----------------------------------------
+完整流程
+---------------------
 
 以下各步骤对应 Bin-relocation 任务的完整 pipeline。
 
 第一步：获取目标位姿
-----------------------------------------
+----------------------
 
 在正式采集数据之前，需要先确定任务的目标末端位姿（target_ee_pose）。
 
@@ -139,7 +73,7 @@
 记录此位姿，后续步骤中将替换到配置文件中。
 
 第二步：采集专家数据
-----------------------------------------
+----------------------
 
 参考 :doc:`franka` 中的「数据采集」章节，在控制节点上采集专家数据。
 
@@ -197,10 +131,10 @@
 ``logs/<running-timestamp>/collected_data`` 路径下。
 
 第三步：SFT 训练 Pi0
-----------------------------------------
+----------------------
 
 创建真机数据集格式
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 本步骤参考 :doc:`sft_openpi` 中的「支持的数据集」章节。针对真机Franka环境，
 可以创建出 ``pi0_realworld`` 数据格式，其定义在以下文件：
@@ -208,11 +142,11 @@
 1. ``rlinf/models/embodiment/openpi/__init__.py``
 2. ``rlinf/models/embodiment/openpi/dataconfig/realworld_dataconfig.py``
 
-为了统一真机和各仿真环境对策略的调用接口，创建
+为了统一真机和各仿真环境对策略的调用接口，创建 
 3. ``rlinf/models/embodiment/openpi/policies/realworld_policy.py``。
 
 计算归一化统计
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 根据 :doc:`sft_openpi` 中的「新 LeRobot 数据集的归一化统计」章节，
 需要为刚采集得到的 LeRobot 数据集计算归一化统计量，
@@ -233,13 +167,13 @@
     |-- ...
 
 这里 ``realworld_franka_bin_relocation`` 对应在``rlinf/models/embodiment/openpi/__init__.py``中定义的 TrainConfig 字段中的 ``repo_id``。
-
+  
 然后，在训练节点上运行：
 
 .. code:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/lerobot/calculate_norm_stats.py \
+   python toolkits/replay_buffer/calculate_norm_stats.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
@@ -255,7 +189,7 @@
 OpenPI 加载器会在运行时从``<model_path>/<repo_id>``读取归一化统计信息。
 
 运行 OpenPI SFT
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 使用``pi0_realworld``数据格式，需要修改SFT训练配置文件``examples/sft/config/realworld_sft_openpi.yaml``：
 
@@ -294,9 +228,9 @@ SFT 导出的 checkpoint 会在后续章节中部署使用。
 更多 OpenPI 数据集及 SFT 训练说明可参考 :doc:`sft_openpi`。
 
 第五步：真机部署
-----------------------------------------
+----------------------
 
-修改 ``evaluations/realworld/realworld_pnp_eval.yaml``，
+修改 ``examples/embodiment/config/realworld_pnp_eval.yaml``，
 使其与你的集群、相机、目标位姿一致：
 
 .. code-block:: yaml
@@ -327,20 +261,24 @@ SFT 训练完成后，将模型检查点路径也更新到部署配置文件中�
        model_path: "/path/to/pi0-model"
 
 在 Ray 集群启动后（参考 :doc:`franka` 中的「集群配置」章节），
-通过 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用
-``realworld_pnp_eval`` 运行部署。策略将根据输入的观测自主控制机器人完成
-Bin-relocation 任务。
+在 head 节点上运行部署脚本：
 
-可以通过修改 ``env.eval.rollout_epoch`` 参数来控制评估的轮数。
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval
+
+该脚本以 **纯评估模式** （``runner.only_eval: True``）运行，
+策略将根据输入的观测自主控制机器人完成 Bin-relocation 任务。
+
+可以通过修改 ``eval_rollout_epoch`` 参数来控制评估的轮数。
 
 .. code:: yaml
 
-   env:
-     eval:
-       rollout_epoch: 20
+   runner:
+     eval_rollout_epoch: 20
 
 通用真机 SFT 环境与部署
-----------------------------------------
+---------------------------
 
 除了上述Bin relocation任务，RLinf 还提供了一个 **通用 SFT 环境** （``FrankaEnv-v1``），允许你完全通过 YAML
 配置来定义新的真机任务，无需编写自定义环境类。适用于：
@@ -349,7 +287,7 @@ Bin-relocation 任务。
 - 在真机上部署（评估）已训练的策略
 
 通用 SFT 环境
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 环境配置模板位于
 ``examples/embodiment/config/env/realworld_franka_sft_env.yaml``。
@@ -373,16 +311,19 @@ Bin-relocation 任务。
 来使用各自的数据类，同时共享相同的构造函数。
 
 真机评估 / 部署
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 完整的评估配置位于
-``evaluations/realworld/realworld_eval.yaml``，它将通用 SFT
-环境与 Pi0 actor 组合用于部署。
+``examples/embodiment/config/realworld_eval.yaml``，它将通用 SFT
+环境与 Pi0 actor 以 **纯评估模式** （``runner.only_eval: True``）组合使用。
 
 运行前请替换以下占位符：
 
 - ``ROBOT_IP`` — 你的 Franka 机器人 IP 地址。
 - ``MODEL_PATH`` — 已训练的模型检查点路径。
 
-启动命令与覆盖参数示例由 :doc:`真机评测指南 <../../evaluations/guides/realworld>`
-统一维护。
+然后执行：
+
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_eval

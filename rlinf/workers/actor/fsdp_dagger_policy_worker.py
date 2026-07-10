@@ -69,7 +69,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             ),
         )
 
-    @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
 
@@ -219,7 +218,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         torch.cuda.empty_cache()
         return self.process_train_metrics(metrics)
 
-    @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self):
         """Skip advantage computation for supervised DAgger updates."""
         return {}
