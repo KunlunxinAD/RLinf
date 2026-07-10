@@ -1,13 +1,8 @@
 DSRL：基于扩散模型的潜在空间强化学习
 ======================================================
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dsrl.png
-   :align: center
-   :width: 70%
-
-   DSRL 在噪声空间中操控冻结的扩散策略。
-
-使用 **DSRL（Diffusion Steering via Reinforcement Learning）** 对预训练的 **Pi0 扩散策略** 做强化学习微调。DSRL 在潜在噪声空间中训练轻量 SAC 智能体来引导冻结的 Pi0 策略，仅需约 500K 可训练参数。
+本文档介绍如何在 RLinf 框架中使用 **DSRL（Diffusion Steering via Reinforcement Learning）** 对预训练的 **Pi0 扩散策略** 进行强化学习微调。
+DSRL 通过在潜在噪声空间中训练一个轻量级 SAC 智能体来引导冻结的 Pi0 策略，仅需约 500K 可训练参数即可实现 RL 微调。
 
 相关论文： `Steering Your Diffusion Policy with Latent Space Reinforcement Learning <https://arxiv.org/abs/2506.15799>`_ （CoRL 2025, Wagenmaker et al.）
 
@@ -20,55 +15,18 @@ DSRL：基于扩散模型的潜在空间强化学习
 3. **冻结 VLM 主干**：预训练的 Pi0 VLM 和扩散专家模块保持冻结，保留泛化能力。
 4. **噪声空间中的 SAC 训练**：SAC 智能体在噪声空间上使用环境奖励进行训练，采用 10 个 Q-head 集成的 Critic 实现稳定的价值估计。
 
-概览
-----------------------------------------
+环境
+----
 
-用一个轻量 SAC 智能体（约 50 万参数）在潜在噪声空间中操控冻结的 π₀ 扩散策略。
+**LIBERO Spatial 环境**
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+- **环境**：LIBERO Spatial 基准
+- **任务**：桌面操作任务，涉及空间推理
+- **观测**：机器人本体感知（8维）+ RGB 图像
+- **动作空间**：Pi0 扩散去噪器生成的连续动作（由 SAC 噪声引导）
 
-   .. grid-item-card:: 算法
-      :text-align: center
-
-      DSRL (SAC)
-
-   .. grid-item-card:: 模型
-      :text-align: center
-
-      π₀（冻结）
-
-   .. grid-item-card:: 环境 / 数据
-      :text-align: center
-
-      LIBERO-Spatial
-
-   .. grid-item-card:: 训练
-      :text-align: center
-
-      ~500K 可训练参数
-
-| **你将完成：** 安装（同 π₀）→ 运行 ``run_embodiment.sh`` → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 预训练的 π₀ 检查点（见 :doc:`pi0`）。
-
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 82
-
-   * - 字段
-     - 说明
-   * - 环境
-     - LIBERO-Spatial——强调空间推理的桌面操作。
-   * - 观测
-     - 8 维本体感知 + RGB 图像。
-   * - 动作
-     - 由 π₀ 冻结的扩散去噪器生成的连续动作，由 SAC 噪声操控。
-
-DSRL 工作原理
-----------------------------------------
+算法
+-----------------------------------------
 
 **DSRL 流程**
 
@@ -84,13 +42,13 @@ DSRL 工作原理
    - **Critic**： ``CompactMultiQHead`` — 10 个 Q 网络集成（共约 500K 参数）
    - **目标网络**：Float32 EMA 影子缓冲区，解决 bfloat16 精度问题
 
-安装
-----------------------------------------
+依赖安装
+--------
 
 DSRL 使用与 Pi0 相同的环境和模型依赖。请参考 :doc:`pi0` 获取完整的安装指南，包括 Docker 镜像配置、依赖安装和模型下载。
 
-运行
-----------------------------------------
+运行脚本
+--------
 
 **1. 配置文件**
 
@@ -151,7 +109,7 @@ DSRL 使用与 Pi0 相同的环境和模型依赖。请参考 :doc:`pi0` 获取�
    bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
 
 可视化与结果
-----------------------------------------
+------------
 
 **1. TensorBoard 日志**
 
@@ -161,8 +119,6 @@ DSRL 使用与 Pi0 相同的环境和模型依赖。请参考 :doc:`pi0` 获取�
    tensorboard --logdir ./logs
 
 **2. 关键监控指标**
-
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。DSRL 相关指标：
 
 - **环境指标**：
 

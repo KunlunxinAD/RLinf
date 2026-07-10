@@ -1,94 +1,48 @@
-在 Franka 上使用 ZED + Robotiq
-================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
-   :align: center
-   :width: 80%
+Franka 真机使用 ZED 相机与 Robotiq 夹爪
+==========================================
 
-   接入 Stereolabs ZED 相机和 Robotiq 2F 夹爪的 Franka 数据采集配置。
+本指南介绍如何在 RLinf 的 Franka 真实世界环境中配置和使用 **Stereolabs ZED 相机**
+以及 **Robotiq 2F-85/2F-140 夹爪**。本文是基础 :doc:`franka` 文档的扩展，仅涵盖
+ZED 和 Robotiq 硬件所需的 **额外** 步骤，包括安装、配置和数据采集。
 
-在基础 Franka 配置上接入 Stereolabs ZED 相机和 Robotiq 2F 夹爪。你将安装 SDK，连接串口设备，更新 YAML 硬件字段，并用新传感器采集数据。
+.. note::
 
-概览
-----------------------------------------
+   如果你还没有阅读过基础的 Franka 指南，请先参考 :doc:`franka`。
+   本页仅涉及 ZED 和 Robotiq 硬件相关的额外配置。
 
-将默认相机/夹爪栈替换为 ZED + Robotiq 部署。
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+硬件架构概览
+-----------------
 
-   .. grid-item-card:: 模型
-      :text-align: center
-
-      Any Franka policy
-
-   .. grid-item-card:: 算法
-      :text-align: center
-
-      Data collection · downstream RL/SFT
-
-   .. grid-item-card:: 任务
-      :text-align: center
-
-      ZED + Robotiq collection
-
-   .. grid-item-card:: 硬件
-      :text-align: center
-
-      Franka · ZED · Robotiq 2F
-
-| **你将完成:** 安装 ZED SDK → 配置 Robotiq 串口设备 → 设置相机序列号 → 采集数据.
-| **前置条件:** :doc:`franka` · ZED SDK 4.2.x · USB-RS485 adapter · Robotiq gripper.
-
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+典型的 ZED + Robotiq 部署使用 **两个节点**：
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 20 40 40
 
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - Sensor setup
-     - ``realworld_collect_data_zed_robotiq``
-     - 采集 ZED 图像并控制 Robotiq 夹爪。
-   * - Data collection
-     - ``collect_data.sh realworld_collect_data_zed_robotiq``
-     - 使用硬件覆盖项采集 SpaceMouse 示教。
-   * - Downstream training
-     - Franka real-world configs
-     - 在 SFT/RL 配置中复用采集数据。
+   * - 节点
+     - 角色
+     - 硬件
+   * - **GPU 服务器** (node 0)
+     - Actor、rollout、env worker；相机采集
+     - NVIDIA GPU（如 RTX 4090），1-3 个 ZED 相机
+   * - **NUC** (node 1)
+     - FrankaController、Robotiq 夹爪
+     - Franka 机械臂、Robotiq 2F（USB-RS485）
 
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+GPU 服务器运行 ZED 相机，因为 ZED SDK 利用 GPU 加速进行深度和图像处理。
+Robotiq 夹爪通过 USB 转 RS485 适配器连接到 NUC（或与机械臂物理连接的机器）。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
 
-   * - 字段
-     - 说明
-   * - Observation
-     - ZED RGB 图像流，通常在 GPU 节点采集。
-   * - Action
-     - Franka 笛卡尔动作加 Robotiq 夹爪命令。
-   * - Reward
-     - 沿用下游 Franka 任务的奖励来源。
-   * - Prompt
-     - 继承下游 Franka 任务配置。
-
-安装
-----------------------------------------
-
-ZED 相机设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ZED 相机安装
+-----------------------
 
 需要在所有进行图像采集的节点（通常为 GPU 服务器）上安装 ZED SDK 及其 Python API。
 完整安装说明请参考
 `ZED Python API 官方安装指南 <https://www.stereolabs.com/docs/development/python/install>`_。
 
 1. 安装 ZED SDK
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 从 `Stereolabs 下载页面 <https://www.stereolabs.com/developers/release>`_
 下载 SDK 安装程序，选择与你的操作系统和 CUDA 版本匹配的版本。
@@ -110,7 +64,7 @@ ZED 相机设置
 按 **Y** 以自动安装 Python 绑定。
 
 2. 安装 Python API（如果 SDK 安装时未安装）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 如果在 SDK 安装过程中跳过了 Python API，或需要安装到其他虚拟环境，
 可以运行 SDK 自带的辅助脚本：
@@ -140,7 +94,7 @@ ZED 相机设置
    请在运行安装脚本 **之前** 先激活虚拟环境。
 
 3. 验证相机检测
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 列出已连接的 ZED 相机并记录 **序列号**：
 
@@ -155,8 +109,8 @@ ZED 相机设置
 记录序列号，后续在 YAML 配置中需要使用。
 
 
-Robotiq 夹爪设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Robotiq 夹爪安装
+-----------------------------
 
 Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信。
 所需的 Python 依赖 ``pymodbus`` 会在运行 Franka 安装脚本时 **自动安装**：
@@ -168,7 +122,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 以下步骤用于在控制夹爪的节点（通常为 NUC）上配置串口设备。
 
 1. 配置串口设备
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 将 USB 转 RS485 适配器插入 NUC。识别串口设备：
 
@@ -186,7 +140,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    sudo usermod -aG dialout $USER
 
 3. 验证夹爪
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^
 
 快速验证（在 NUC 上运行）：
 
@@ -203,8 +157,8 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    "
 
 
-配置文件
-----------------------------------------
+YAML 配置说明
+-------------------
 
 与标准配置（RealSense + Franka 夹爪）相比，主要区别在于 ``hardware.configs``
 中新增了 ``camera_type``、``gripper_type``、``gripper_connection`` 和
@@ -269,8 +223,8 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 
 .. _franka-zed-robotiq-data-collection-zh:
 
-运行
-----------------------------------------
+数据采集
+-----------------
 
 我们提供了专用的数据采集脚本和配置文件，用于使用 ZED + Robotiq 硬件进行遥操作示教
 数据采集。该流程与 :doc:`franka` 中描述的基础 Franka 数据采集流程一致，
@@ -368,14 +322,14 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 
 .. code-block:: bash
 
-   bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
+   bash examples/embodiment/collect_data_zed_robotiq.sh
 
 脚本默认使用 ``realworld_collect_data_zed_robotiq`` 配置，
 也可以传入不同的配置名称作为参数：
 
 .. code-block:: bash
 
-   bash examples/embodiment/collect_data.sh <config_name>
+   bash examples/embodiment/collect_data_zed_robotiq.sh <config_name>
 
 采集过程中使用 SpaceMouse 遥操作机器人。脚本会在达到配置的 episode 数量后
 自动终止，数据保存在 ``logs/<时间戳>-<配置名>/collected_data/`` 目录下。
@@ -385,7 +339,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 
 
 集群配置注意事项
-----------------------------------------
+---------------------
 
 集群配置步骤与 :doc:`franka` 中描述的相同，主要区别如下：
 
@@ -400,11 +354,11 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    所有依赖，然后再启动 Ray。
 
 关于多节点 Ray 配置的详细信息，请参考 :doc:`franka` 和
-:doc:`../../guides/hetero`。
+:doc:`../../tutorials/configuration/hetero`。
 
 
 故障排查
-----------------------------------------
+----------------
 
 **ZED 相机未检测到**
 

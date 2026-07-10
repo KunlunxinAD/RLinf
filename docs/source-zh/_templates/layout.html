@@ -10,9 +10,7 @@ window.SPHINX_AI_CONFIG = {
     port: {{ typesense_port | default(8108) }},
     protocol: '{{ typesense_protocol | default("http") }}',
     apiKey: '{{ typesense_api_key | default("") }}',
-    collectionName: '{{ typesense_collection | default("sphinx_docs") }}',
-    enableVectorSearch: {{ 'false' if typesense_enable_vector_search == 'false' else 'true' }},
-    stopwordsSet: '{{ typesense_stopwords_set | default("") }}'
+    collectionName: '{{ typesense_collection | default("sphinx_docs") }}'
   },
   build: {
     environment: '{{ sphinx_env | default("development") }}',
@@ -43,11 +41,9 @@ window.SPHINX_AI_CONFIG = {
   }
 })();
 </script>
-{%- endblock %}
+{%- endblock %} 
 
-{%- block docs_navbar %}
-<button class="pst-navbar-icon sidebar-toggle primary-toggle rlinf-sidebar-toggle d-print-none" aria-label="{{ _('Site navigation') }}">
-  <span class="fa-solid fa-bars"></span>
-</button>
-{% include "askai.html" %}
+{%- block navbar_end %}
+  {{ super() }}
+  {%- include "askai.html" -%}
 {%- endblock %}

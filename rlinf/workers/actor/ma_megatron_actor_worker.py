@@ -197,10 +197,7 @@ class MAMegatronActor(MegatronActor):
 
                 advantages = batch["advantages"]
                 advantages *= batch["loss_scales"]
-                # Prefer recomputed_logprobs, fallback to rollout_logprobs
-                old_logprobs = batch.get("recomputed_logprobs")
-                if old_logprobs is None:
-                    old_logprobs = batch["rollout_logprobs"]
+                prev_logprobs = batch["prev_logprobs"]
                 ref_logprobs = None
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
@@ -209,11 +206,11 @@ class MAMegatronActor(MegatronActor):
                     assert False, (
                         "importance_sampling_fix is not supported for dynamic rollout batch"
                     )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch.get("recomputed_logprobs")
+                    rollout_prev_logprobs = prev_logprobs
+                    recompute_prev_logprobs = batch["recompute_prev_logprobs"]
                     advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
+                        (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                        min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
                 mask = batch["response_mask"]
@@ -223,7 +220,7 @@ class MAMegatronActor(MegatronActor):
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
-                    old_logprobs=old_logprobs,
+                    old_logprobs=prev_logprobs,
                     advantages=advantages,
                     clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
@@ -394,7 +391,7 @@ class MAMegatronActor(MegatronActor):
         batch = DynamicRolloutResult.merge_batches(
             batches, self.cfg.algorithm.group_size
         )
-        assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
+        assert "prev_logprobs" in batch
         # Compute advantages and returns
         batch = self.compute_advantages_and_returns(batch)
         batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(
@@ -550,10 +547,12 @@ class MAMegatronActor(MegatronActor):
 
         self._load_weight_and_optimizer()
         with self.worker_timer():
-            # compute recomputed logprobs
-            recomputed_logprobs = self.inference_step(merged_batch).cpu()
-            rollout_result.recomputed_logprobs = recomputed_logprobs
-
+            # compute prev logprobs
+            prev_logprobs = self.inference_step(merged_batch).cpu()
+            if rollout_result.rollout_logprobs is not None:
+                rollout_result.recompute_prev_logprobs = prev_logprobs
+            else:
+                rollout_result.prev_logprobs = prev_logprobs
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None, (
                     "ref_policy_state_dict must be set to compute ref_logprobs"
@@ -580,10 +579,6 @@ class MAMegatronActor(MegatronActor):
         with self.worker_timer():
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"]  # [num_sequence, seq_len]
-                logprob = batch.get("recomputed_logprobs")
-                if logprob is None:
-                    logprob = batch.get("rollout_logprobs")
-                logprob = logprob.cuda()
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
@@ -595,7 +590,9 @@ class MAMegatronActor(MegatronActor):
                     idx_to_traj=batch["idx_to_traj"],
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=logprob,
+                    logprob=batch["prev_logprobs"].cuda()
+                    if "prev_logprobs" in batch
+                    else None,
                     ref_logprob=batch["ref_logprobs"].cuda()
                     if "ref_logprobs" in batch
                     else None,

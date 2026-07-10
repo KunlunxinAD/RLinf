@@ -91,17 +91,7 @@ class OfflineRunner:
     ):
         """Async version that puts table printing in queue."""
         self.log_queue.put(
-            (
-                print_metrics_table,
-                (
-                    step,
-                    total_steps,
-                    start_time,
-                    metrics,
-                    start_step,
-                    self.metric_logger.log_path,
-                ),
-            )
+            (print_metrics_table, (step, total_steps, start_time, metrics, start_step))
         )
 
     def init_workers(self):

@@ -1,5 +1,5 @@
-WideSeek-R1 评测
-========================================
+评测
+====
 
 本页介绍如何在 RLinf 中评测 WideSeek-R1。
 
@@ -10,40 +10,12 @@ WideSeek-R1 评测
 
 参考配置使用的是 Qwen3 系列稠密模型。
 
-概述
-----------------------------------------
-
-使用本页评测已发布的 WideSeek-R1 checkpoint，或你自己的 Qwen3 稠密模型。
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: 模型
-      :text-align: center
-
-      WideSeek-R1-4B 或 Qwen3 系列稠密模型
-
-   .. grid-item-card:: 基准
-      :text-align: center
-
-      WideSearch 与标准 QA
-
-   .. grid-item-card:: 工具
-      :text-align: center
-
-      WideSearch 使用在线搜索；QA 使用离线检索
-
-   .. grid-item-card:: 输出
-      :text-align: center
-
-      ``metric.json`` 与生成结果
-
 .. contents::
    :depth: 2
    :local:
 
 前置条件
-----------------------------------------
+--------
 
 评测前，请确保以下组件已准备就绪：
 
@@ -52,7 +24,7 @@ WideSeek-R1 评测
 - 已配置相应的工具后端。参见 :doc:`tools`。
 
 下载模型
-----------------------------------------
+--------
 
 已发布的 checkpoint 可从以下地址获取：
 
@@ -70,12 +42,12 @@ WideSeek-R1 评测
        model_path: /PATH/TO/MODEL
 
 评测数据集
-----------------------------------------
+----------
 
 WideSeek-R1 当前支持两类评测数据集。
 
 WideSearch 基准
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 
 请使用 Hugging Face 上提供的格式化 WideSearch 评测集：
 
@@ -103,7 +75,7 @@ WideSearch 基准
 在参考配置中，使用 8 张 GPU 做生成、8 张 GPU 运行评判模型，对 200 条 WideSearch 样本做完整评测大约需要 **7 小时** 。
 
 标准 QA 评测
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
 对于标准 QA 评测，请使用 ASearcher 发布的数据集：
 
@@ -126,7 +98,7 @@ WideSearch 基准
 建议先在部分标准 QA 数据上运行评测，以进行快速的基本正确性检查。
 
 运行评测
-----------------------------------------
+--------
 
 启动评测前，请确认以下各项：
 
@@ -143,7 +115,7 @@ WideSearch 基准
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
 
 输出文件
-----------------------------------------
+--------
 
 评测输出会写入：
 
@@ -162,7 +134,7 @@ WideSearch 基准
 对于 WideSearch 评测，RLinf 会保存生成的回答，以便使用官方 WideSearch 评测流程进行打分。
 
 额外的 WideSearch 打分
-----------------------------------------
+------------------------
 
 如果需要最终的 WideSearch 基准分数，请使用专门的评测仓库：
 
@@ -171,7 +143,7 @@ WideSearch 基准
 完整流程请参见该仓库的 README。
 
 双引擎评测
-----------------------------------------
+----------
 
 WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例进行评测，从而让 planner 和 worker 角色使用不同模型。
 
@@ -190,7 +162,7 @@ WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例进�
 然后你可以分别在 ``rollout.model.model_path`` 和 ``rollout_fixed_worker.model.model_path`` 下设置不同的模型路径。
 
 说明
-----------------------------------------
+----
 
 与训练时相同，``agentloop.workflow`` 用于控制评测采用单智能体还是多智能体执行：
 

@@ -1,84 +1,51 @@
-在 Franka 上使用 HG-DAgger
-================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg
-   :align: center
-   :width: 80%
+真实 Franka 的 HG-DAgger 全流程
+===============================
 
-   用于采集干预数据并在线训练 Franka 策略的 Human-Gated DAgger 流程。
+**HG-DAgger** （Human-Gated DAgger）是一种面向真实世界交互式模仿学习的算法
+流程。该流程先采集带遥操作的真实数据，再基于收集到的 LeRobot 数据集执行
+OpenPI SFT，最后在机器人上继续运行异步在线 HG-DAgger。
 
-使用 Human-Gated DAgger 训练 Franka 真机策略。你将采集干预数据，计算 OpenPI 归一化统计，运行 SFT，然后启动在线 HG-DAgger，并只保存专家接管步骤用于训练。
+在 RLinf 配置中，HG-DAgger 主要通过
+``algorithm.dagger.only_save_expert: True`` 启用。该选项表示仅保存专家实际执行
+的 step，这也是现实世界干预式数据的默认用法。
 
-概览
-----------------------------------------
+环境
+----
 
-用人工门控干预在线提升 Franka 真机策略。
+**真实 Franka Bin Relocation + Pi0**
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+- **环境**：运行在机器人节点上的 ``FrankaBinRelocationEnv-v1``
+- **观测**：腕部 / 外部 RGB 图像与机器人状态
+- **动作空间**：末端执行器 delta qpos 与夹爪动作
+- **适用场景**：采集带人工引导的真实数据，进行 OpenPI SFT，然后继续异步 HG-DAgger
 
-   .. grid-item-card:: 模型
-      :text-align: center
+算法
+----
 
-      OpenPI π₀ / π₀.₅
+**HG-DAgger 流程**
 
-   .. grid-item-card:: 算法
-      :text-align: center
+1. **人工引导数据采集**
 
-      SFT · HG-DAgger
+   - 操作者通过 spacemouse 在真机上进行干预。
+   - RLinf 将成功轨迹导出为 LeRobot 数据集，供后续 SFT 使用。
 
-   .. grid-item-card:: 任务
-      :text-align: center
+2. **监督预热**
 
-      Real-world PnP
+   - 为采集到的数据集计算归一化统计量。
+   - 先运行 OpenPI SFT，将人工引导数据训练成初始学生策略。
 
-   .. grid-item-card:: 硬件
-      :text-align: center
+3. **在线 HG-DAgger**
 
-      Franka · SpaceMouse/operator
+   - 异步 rollout 在真机上继续执行，专家数据由人工通过 spacemouse 遥操作产生。
+   - 当 ``only_save_expert: True`` 时，只有专家实际执行的 step 会写入 replay buffer。
 
-| **你将完成:** 采集干预数据 → 计算 norm stats → 运行 SFT → 启动 HG-DAgger → 监控干预.
-| **前置条件:** :doc:`franka` · :doc:`sft_openpi` · Ray cluster · trained or base OpenPI checkpoint.
+4. **Replay Buffer 更新**
 
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   - actor 使用 ``embodied_dagger`` 损失在干预数据上继续训练。
+   - SFT 阶段导出的 checkpoint 会作为在线 HG-DAgger 的初始化模型。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
-
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - Collection
-     - ``realworld_collect_data``
-     - 采集真机干预示教。
-   * - SFT
-     - ``realworld_sft_openpi``
-     - 训练 student 初始化。
-   * - HG-DAgger
-     - ``realworld_pnp_dagger_openpi``
-     - 以 expert-only save 模式运行在线干预训练。
-
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
-
-   * - 字段
-     - 说明
-   * - Observation
-     - Franka 相机帧与可选机器人状态。
-   * - Action
-     - OpenPI action 解码为 Franka 真机控制。
-   * - Reward
-     - 人工门控干预信号与任务结果。
-   * - Prompt
-     - OpenPI 数据集/配置 metadata 中的任务文本。
-
-安装
-----------------------------------------
+依赖安装
+--------
 
 真实世界流程的不同节点需要 **不同的软件环境**：
 
@@ -86,7 +53,7 @@
 - **训练 / rollout 节点**：使用与模拟器 DAgger :doc:`dagger` 相同的环境。
 
 机器人 / Env 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
 请先参考 :doc:`franka` 中的控制节点安装说明，完成固件检查、实时内核、ROS 与
 Franka 控制依赖的准备。
@@ -100,9 +67,9 @@ Franka 控制依赖的准备。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-franka
+      rlinf/rlinf:agentic-rlinf0.2-franka
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
 
 随后切换到与你的 libfranka 版本兼容的环境：
 
@@ -122,7 +89,7 @@ Franka 控制依赖的准备。
 source 对应的 ROS / Franka controller 环境。
 
 训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
 
 该节点使用与模拟器 Pi0 DAgger 相同的软件环境。
 
@@ -135,9 +102,9 @@ source 对应的 ROS / Franka controller 环境。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 进入容器后执行：
 
@@ -153,8 +120,8 @@ source 对应的 ROS / Franka controller 环境。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-集群设置
-----------------------------------------
+集群配置
+--------
 
 在启动采集或训练任务之前，请先完成 :doc:`franka` 中介绍的 Ray 集群配置。
 通常训练 / rollout 节点作为 Ray head（``RLINF_NODE_RANK=0``），Franka 控制
@@ -173,11 +140,11 @@ source 对应的 ROS / Franka controller 环境。
 Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必在 ``ray start``
 之前完成对应环境的 source。
 
-运行
-----------------------------------------
+全流程
+------
 
 1. 采集带人工引导的真实数据
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 从 ``examples/embodiment/config/realworld_collect_data.yaml`` 开始。对于抓放
 任务，需要将环境从 peg insertion 切换为 bin relocation：
@@ -228,10 +195,10 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 - replay-buffer 轨迹到 ``logs/{timestamp}/demos/``
 - LeRobot 数据到 ``logs/{timestamp}/collected_data/``
 
-关于采集格式，参见 :doc:`../../guides/data_collection`。
+关于采集格式，参见 :doc:`../../tutorials/embodied/data_collection`。
 
 2. 计算归一化统计
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
 在进行 SFT 或 HG-DAgger 之前，先为采集得到的 LeRobot 数据集计算 OpenPI
 归一化统计：
@@ -247,7 +214,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 数据集说明可参考 :doc:`sft_openpi`。
 
 3. 运行 OpenPI SFT
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~
 
 启动前，先修改 ``examples/sft/config/realworld_sft_openpi.yaml``：
 
@@ -272,7 +239,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
 可参考 :doc:`sft_openpi`。
 
 4. 在真机上运行异步 HG-DAgger
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 修改 ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml``，使其与你的
 集群、相机、目标位姿与 checkpoint 一致：
@@ -329,7 +296,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
    bash examples/embodiment/run_realworld_async.sh realworld_pnp_dagger_openpi
 
 可视化与监控
-----------------------------------------
+------------
 
 **1. TensorBoard 日志**
 

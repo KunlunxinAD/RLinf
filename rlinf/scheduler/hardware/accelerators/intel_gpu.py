@@ -16,21 +16,14 @@
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/intel_gpu.py
 
 import os
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from ray._private.accelerators.intel_gpu import IntelGPUAcceleratorManager
 
-from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
+from .accelerator import AcceleratorManager, AcceleratorType
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
-
-
-@AcceleratorManager.register_profiling_config(AcceleratorType.INTEL_GPU)
-@dataclass
-class IntelGPUProfileConfig(ProfileConfig):
-    """Intel GPU profiling configuration."""
 
 
 @AcceleratorManager.register_manager(AcceleratorType.INTEL_GPU)

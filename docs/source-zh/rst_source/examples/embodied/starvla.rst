@@ -1,87 +1,39 @@
 StarVLA 模型强化学习训练
-========================================
+=========================
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png
-   :align: center
-   :width: 70%
+本文档介绍如何使用 **RLinf** 框架对 **StarVLA** 模型进行强化学习微调。StarVLA 是一个开源的 Vision-Language-Action (VLA) 工具箱，支持将 VLM backbone 与 action head 以模块化方式组合，从而训练与部署多类 VLA 模型。本示例以 **LIBERO Spatial** 基准为例，使用 **QwenOFT** 模型。
 
-   StarVLA：模块化的 VLM backbone + action head。
+训练目标概述
+------------
 
-使用 RLinf 对 **StarVLA** 模型进行强化学习微调。StarVLA 是一个开源的
-Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模块化方式组合；
-本示例采用 **QwenOFT** 设置，在 **LIBERO** 上使用 GRPO 训练。
+本次训练的主要目标包括：
 
-概览
-----------------------------------------
+1. 视觉理解：处理来自相机的 RGB 图像。
+2. 语言理解：理解自然语言任务描述。
+3. 动作生成：读取 VLM backbone 的 hidden states，通过 MLP action head **一次性并行回归** 一段连续动作序列（action chunk）。
+4. 强化学习：结合环境反馈，使用 **GRPO** 算法优化策略。
 
-在 LIBERO Spatial 上用 GRPO 微调 StarVLA（QwenOFT）。
+环境与接口约定
+--------------
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+LIBERO 环境
+^^^^^^^^^^^
 
-   .. grid-item-card:: 环境
-      :text-align: center
+* **Environment**：基于 robosuite (MuJoCo) 的 LIBERO 仿真基准。
+* **Task**：控制 7 自由度机械臂完成家务操作技能。
+* **Observation**：多视角 RGB 图像 +（可选）proprio/state。
+* **Action Space**：连续动作，常见为 7 维（末端位姿增量 6D + gripper 1D）。
+* **Robot Platform**：RLinf 通过环境变量 ``ROBOT_PLATFORM`` 区分平台并选择合适的动作维度与（反）归一化逻辑。本文默认 ``ROBOT_PLATFORM=libero``。
 
-      LIBERO
+任务描述格式
+^^^^^^^^^^^^
 
-   .. grid-item-card:: 算法
-      :text-align: center
+StarVLA 直接使用环境提供的自然语言任务描述作为语言模型输入。
 
-      GRPO
+环境观测数据结构（``env_obs``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-   .. grid-item-card:: 任务
-      :text-align: center
-
-      LIBERO Spatial
-
-   .. grid-item-card:: 硬件
-      :text-align: center
-
-      1 节点 · GPU
-
-| **你将完成：** 安装 → 下载 StarVLA checkpoint 与 base VLM → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 StarVLA LIBERO checkpoint 与 Qwen2.5-VL 基座（见下文）。
-
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-根据环境、任务族以及配置或权重工件选择对应的模型页面。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 24 30 24
-
-   * - 环境
-     - 任务 / 套件
-     - 配置 / 权重
-     - 重点
-   * - LIBERO
-     - LIBERO-Spatial
-     - ``libero_spatial_grpo_starvla``
-     - 在 LIBERO 上使用 GRPO 微调 StarVLA。
-
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38
-
-   * - 字段
-     - 说明
-   * - Observation
-     - 按 StarVLA 格式组织的 LIBERO 图像观测与机器人状态。
-   * - Action
-     - 通过 StarVLA 策略 API 生成的连续机器人控制命令。
-   * - Reward
-     - GRPO 使用的 LIBERO 任务成功信号或 shaped reward。
-   * - Prompt
-     - LIBERO 自然语言任务指令。
-
-接口约定
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在 RLinf 的 StarVLA wrapper 中，``env_obs`` 为 batch-first 的 dict（第 0 维为 batch size ``B``）。
+在 RLinf 的 StarVLA wrapper 中，环境侧观测 ``env_obs`` 建议组织为一个 dict，并遵循 batch-first（第 0 维为 batch）的约定。令 ``B`` 为并行环境数（batch size）。
 
 必选字段：
 
@@ -92,24 +44,54 @@ Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模
 可选字段：
 
 * ``wrist_images``：腕部视角 RGB，``torch.uint8``，形状 ``[B, H, W, 3]``。
-* ``extra_view_images``：其他视角 RGB，推荐形状 ``[B, V, H, W, 3]``（``V`` 为额外视角数）。若仅提供单个额外视角，也允许 ``[B, H, W, 3]``，等价视为 ``V=1``。
+* ``extra_view_images``：其他视角 RGB，``torch.uint8``，推荐形状 ``[B, V, H, W, 3]``（``V`` 为额外视角数）。若仅提供单个额外视角，也允许 ``[B, H, W, 3]``，并在 wrapper 内等价视为 ``V=1``。
 
-在 LIBERO 的默认实现中，``states`` 的常见定义为末端位置 ``(x, y, z)``（3 维）、
-末端姿态轴角 ``(rx, ry, rz)``（3 维）与夹爪状态（原始 2 维），因此常见
-``D_state = 3 + 3 + 2 = 8``。若 checkpoint 期望 7 维状态，wrapper 会将 2 维夹爪状态压缩为
+在 LIBERO 的默认实现中，``states`` 的常见定义为：
+
+* 末端位置 ``(x, y, z)`` （3 维）
+* 末端姿态轴角 ``(rx, ry, rz)`` （3 维）
+* 夹爪状态（原始为 2 维）
+
+因此常见 ``D_state = 3 + 3 + 2 = 8``。若 checkpoint 期望 7 维状态，wrapper 会将 2 维夹爪状态做压缩（取均值）并适配为：
+
 ``[x, y, z, rx, ry, rz, g_mean]``，其中 ``g_mean = 0.5 * (g0 + g1)``。
 
-StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
-``T = actor.model.num_action_chunks``（planning horizon），
-``D_action = actor.model.action_dim``（LIBERO 常用 7）。Rollout 采用 receding-horizon：
-每次 forward 产生长度 ``T`` 的动作序列，环境执行前 ``N`` 步（``1 <= N <= T``）后重新规划。
+动作块（action chunk）接口
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-安装
-----------------------------------------
+StarVLA 推理接口输出动作块：
 
-.. include:: _setup_common.rst
+* ``actions``：``torch.float32``，形状 ``[B, T, D_action]``。
+* ``T = actor.model.num_action_chunks``：动作块长度 / planning horizon（可配置）。
+* ``D_action = actor.model.action_dim``：动作维度（LIBERO 常用 7）。
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
+Rollout 的执行策略通常采用 receding-horizon：策略每次 forward 产生一段长度 ``T`` 的动作序列，环境按设定执行其中前 ``N`` 步后重新规划下一段动作（``1 <= N <= T``）。若采用默认“整块执行再重规划”，则 ``N = T``。
+
+算法说明
+--------
+
+* **StarVLA（QwenOFT）**：VLM backbone 提供多模态理解能力；MLP action head 以并行解码方式回归连续动作序列（非扩散式采样）。
+* **GRPO**：基于环境反馈进行策略优化，兼容 RLinf 的具身训练流水线与 LIBERO 环境。
+
+依赖安装
+--------
+
+1. 克隆 RLinf 仓库
+^^^^^^^^^^^^^^^^^^
+
+若你在开发/测试 PR，可克隆你的 fork 并切到对应分支；若已合入主仓库，直接克隆上游即可。
+
+.. code-block:: bash
+
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+^^^^^^^^^^^^
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
 
 .. code:: bash
 
@@ -118,24 +100,37 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-   # 进入容器后，切换到 StarVLA 虚拟环境：
-   source switch_env starvla
+.. note::
 
-**选项 2：自定义环境** —— 安装套件 ``--env maniskill_libero``：
+   Docker 镜像 tag 为了可复现实验进行了固定，可能会落后于最新的 RLinf 依赖版本。
+   如需更新版本，请在 ``docker/`` 下重新构建镜像，或使用下方的“自定义环境”安装方式。
+
+请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
+   source switch_env starvla
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
    bash requirements/install.sh embodied --model starvla --env maniskill_libero
    source .venv/bin/activate
 
-下载模型
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+模型下载
+---------
 
-下载 StarVLA checkpoint 与 base VLM：
+训练开始前，请从 HuggingFace 下载所需的 StarVLA QwenOFT checkpoint 与 base VLM：
+
+* ``StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1``
+* ``Qwen/Qwen2.5-VL-3B-Instruct``
 
 .. code-block:: bash
 
@@ -144,23 +139,31 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
    git clone https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
    git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
 
-   # 方式2：使用 huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
+   # 方式2：使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install -U huggingface-hub
    hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
    hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
 .. note::
 
-   下载完成后，请修改 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的
-   ``framework.qwenvl.base_vlm``，使其指向 ``Qwen2.5-VL-3B-Instruct`` 的本地路径。
+   下载完成后，请修改 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm``，
+   使其指向 ``Qwen2.5-VL-3B-Instruct`` 的本地路径。
 
-运行
-----------------------------------------
 
-**1. 配置**
+快速开始
+--------
 
-StarVLA + GRPO + LIBERO Spatial 使用
-``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``。将模型路径指向你的下载，并设置动作接口：
+配置文件
+^^^^^^^^
+
+StarVLA + GRPO + LIBERO（spatial tasks）示例配置：
+
+* ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``
+
+关键配置片段
+^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -184,34 +187,38 @@ StarVLA + GRPO + LIBERO Spatial 使用
          expected_num_action_chunks: ${actor.model.num_action_chunks}
          enable_state_input: False
 
-**2. 启动**
+启动命令
+^^^^^^^^
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
-评估建议采用 RLinf 统一的评估流程，详见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。
+评估
+----
 
-可视化与结果
-----------------------------------------
+评估建议采用 RLinf 统一的 VLA 评估流程（参见 RLinf 文档中的 Embodied VLA Evaluation 教程）。
 
-关注任务成功率指标 ``env/success_once``。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
+参考运行结果
+注：以下运行结果采用的模型来自：https://huggingface.co/JasonYang66/LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT
 
-参考曲线（采用的模型来自
-`LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT <https://huggingface.co/JasonYang66/LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT>`_）：
+LIBERO Goal:
 
-.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_goal_starvla_baseline.png
-   :alt: LIBERO Goal StarVLA baseline result curve
+.. image:: https://github.com/RLinf/misc/raw/main/pic/libero_goal_starvla_baseline.png
+   :alt: libero_goal_starvla_baseline result curve
    :width: 95%
    :align: center
 
-.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_object_starvla_baseline.png
-   :alt: LIBERO Object StarVLA baseline result curve
+LIBERO Object:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/libero_object_starvla_baseline.png
+   :alt: libero_object_starvla_baseline result curve
    :width: 95%
    :align: center
 
-.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_spatial_starvla_baseline.png
-   :alt: LIBERO Spatial StarVLA baseline result curve
+LIBERO Spatial:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/libero_spatial_starvla_baseline.png
+   :alt: libero_spatial_starvla_baseline result curve
    :width: 95%
    :align: center
