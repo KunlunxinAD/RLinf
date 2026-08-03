@@ -14,7 +14,9 @@
 import asyncio
 import copy
 import os
+from dataclasses import fields
 from functools import partial
+from itertools import count
 from typing import AsyncGenerator, Optional, Union, cast
 
 from omegaconf import DictConfig
@@ -22,15 +24,10 @@ from PIL import Image
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 from vllm.engine.arg_utils import EngineArgs
-from vllm.inputs.data import PromptType, TextPrompt, TokensPrompt
+from vllm.inputs import PromptType, TextPrompt, TokensPrompt
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.async_llm import AsyncLLM as AsyncLLMEngine
-
-try:
-    from vllm.utils import Counter
-except ImportError:
-    from vllm.utils.counter import Counter
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.io_struct import RolloutRequest, RolloutResult, SeqGroupInfo
@@ -41,7 +38,7 @@ from rlinf.utils.data_process import process_image_data
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.utils import RunningStatusManager, print_vllm_outputs
 
-from . import VLLM_WORKER_CLS, VLLMExecutor, use_runner_arg
+from . import VLLM_WORKER_CLS, VLLMExecutor
 
 
 class VLLMWorker(Worker):
@@ -63,7 +60,7 @@ class VLLMWorker(Worker):
             "The capital of France is",
             "The future of AI is",
         ]
-        self._request_counter = Counter()
+        self._request_counter = count()
 
         # NOTE(daibo):
         # because 0.8.5 vLLM can not return outputs when generation
@@ -336,7 +333,7 @@ class VLLMWorker(Worker):
         If mode is collocated, it will additionally offload model weights,
         ready to use parameters sent from actor.
         """
-        engine_args_kwargs = {
+        engine_kwargs = {
             "model": self._cfg.rollout.model.model_path,
             "tensor_parallel_size": self._cfg.rollout.tensor_parallel_size,
             "dtype": torch_dtype_from_precision(self._cfg.rollout.model.precision),
@@ -349,13 +346,12 @@ class VLLMWorker(Worker):
             "trust_remote_code": self._cfg.actor.tokenizer.trust_remote_code,
             "max_model_len": self._cfg.runner.seq_length,
             "max_num_seqs": self._cfg.rollout.max_running_requests,
-            "enable_sleep_mode": True,
+            "enable_sleep_mode": True,  # it enables offload weights
         }
-        if use_runner_arg():
-            engine_args_kwargs["runner"] = "generate"
-        else:
-            engine_args_kwargs["task"] = "generate"
-        engine_args: EngineArgs = EngineArgs(**engine_args_kwargs)
+        # `task` was dropped from EngineArgs after 0.8.5; generation is inferred.
+        if "task" in {field.name for field in fields(EngineArgs)}:
+            engine_kwargs["task"] = "generate"
+        engine_args: EngineArgs = EngineArgs(**engine_kwargs)
         vllm_config: VllmConfig = engine_args.create_engine_config()
 
         # here to set the customed worker class for VLLM engine
