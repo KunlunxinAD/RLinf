@@ -147,6 +147,7 @@ Download BEHAVIOR-1K assets and set ``OMNIGIBSON_DATA_PATH`` before every run:
    mkdir -p $OMNIGIBSON_DATA_PATH
 
    # Run these inside the active venv. Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+   # The following Python command will download the dataset into $OMNIGIBSON_DATA_PATH.
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -368,6 +369,39 @@ outputs include top-level ``robot_poses`` only when the task metadata provides t
 the key is omitted and reset falls back to the task's default robot pose. BEHAVIOR-1K's upstream
 ``multiply_b1k_tasks.py`` still works, but RLinf's generator is recommended because it reads the
 RLinf YAML directly and preserves ``activity_definition_id``.
+
+--------------
+
+**5. Evaluate with the PyTorch OpenPI (Pi0.5) code**
+
+BEHAVIOR evaluation is also supported with the new **self-contained PyTorch
+OpenPI** code (model ``model_type: openpi_pytorch``; see
+:doc:`sft_openpi_pytorch` for the matching SFT flow). The eval config is:
+
+- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
+
+This config runs in eval-only mode (``runner.only_eval: True``) and consumes a
+**new-format** PyTorch checkpoint, i.e. one produced by the OpenPI checkpoint
+convertor (``ckpt_convertor.openpi`` ``old2new`` / ``sft2new``). Set the model
+paths directly in the config as ``/path/to/...`` placeholders:
+
+- ``rollout.model.model_path``: the new-format eval checkpoint.
+- ``rollout.model.openpi.assets_dir``: directory holding the BEHAVIOR norm-stats.
+  Norm stats resolve at ``{assets_dir}/{asset_id}/norm_stats.json``.
+- ``rollout.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece
+  tokenizer model.
+
+.. code:: bash
+
+   export ISAAC_PATH=/path/to/isaac-sim
+   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
+
+.. note::
+
+   Evaluation runs the flow-matching action head with non-deterministic
+   (random) sampling noise, so per-run trajectories and success counts will vary
+   slightly between repeated runs.
 
 
 Visualization and Results

@@ -142,6 +142,7 @@
 
    # 数据集会占用超过 30 GB。
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   # 之后的 python 命令会下载数据集到 $OMNIGIBSON_DATA_PATH 中。
    mkdir -p $OMNIGIBSON_DATA_PATH
 
    # 在已激活的 venv 中运行。国内用户可设置 HF_ENDPOINT=https://hf-mirror.com。
@@ -264,6 +265,38 @@ OpenPI-Comet 作为示例来源：
 独立评估请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
 该指南负责 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、
 ``behavior_openpi_pi05_eval`` 启动命令和结果解读。
+
+--------------
+
+**5. 使用 PyTorch OpenPI (Pi0.5) 代码进行评估**
+
+BEHAVIOR 评估同样支持新的 **自包含 PyTorch OpenPI** 代码（模型
+``model_type: openpi_pytorch``；对应的 SFT 流程参见 :doc:`sft_openpi_pytorch`）。
+评估配置为：
+
+- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
+
+该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **新格式** 的
+PyTorch checkpoint，即由 OpenPI checkpoint 转换器
+（``ckpt_convertor.openpi`` 的 ``old2new`` / ``sft2new``）产出的 checkpoint。
+将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
+
+- ``rollout.model.model_path``：新格式评估 checkpoint。
+- ``rollout.model.openpi.assets_dir``：存放 BEHAVIOR 归一化统计的目录。归一化统计在
+  ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
+- ``rollout.model.openpi.paligemma_tokenizer``：PaliGemma SentencePiece tokenizer
+  模型。
+
+.. code:: bash
+
+   export ISAAC_PATH=/path/to/isaac-sim
+   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
+
+.. note::
+
+   评估时流匹配动作头使用非确定性（随机）采样噪声，因此重复运行之间，单次轨迹与
+   成功次数会有轻微差异。
 
 
 配置参考

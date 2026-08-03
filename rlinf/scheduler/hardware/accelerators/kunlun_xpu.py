@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Override of Ray's NPUAcceleratorManager
-# https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/npu.py
-
-import glob
 import os
 from typing import TYPE_CHECKING, Optional
 
@@ -32,11 +28,24 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_num_devices():
         """Get the number of Kunlun XPU devices on the node."""
+        initialized = False
         try:
-            xpu_files = glob.glob("/dev/xpu[0-9]*")
-            return len(xpu_files)
+            import torch_xmlir._XMLIRC as XMLIR_C
+
+            XMLIR_C.xpumlInit()
+            initialized = True
+            device_count = XMLIR_C.xpumlDeviceGetCount()
+            XMLIR_C.xpumlShutdown()
+            return device_count
         except Exception:
             return 0
+        finally:
+            if initialized:
+                try:
+                    XMLIR_C.xpumlShutdown()
+                except Exception:
+                    # Ignore shutdown errors to avoid masking earlier exceptions.
+                    pass
 
     @staticmethod
     def get_accelerator_type():
@@ -46,7 +55,28 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_accelerator_model():
         """Get the model of the Kunlun XPU."""
-        return "P800"
+        initialized = False
+        try:
+            import torch_xmlir._XMLIRC as XMLIR_C
+
+            XMLIR_C.xpumlInit()
+            initialized = True
+            device_count = XMLIR_C.xpumlDeviceGetCount()
+            if device_count > 0:
+                device = XMLIR_C.xpumlDeviceGetHandleByIndex(0)
+                model = XMLIR_C.xpumlDeviceGetName(device)
+                return model
+            else:
+                return "UNKNOWN"
+        except Exception:
+            return "UNKNOWN"
+        finally:
+            if initialized:
+                try:
+                    XMLIR_C.xpumlShutdown()
+                except Exception:
+                    # Ignore shutdown errors to avoid masking earlier exceptions.
+                    pass
 
     @staticmethod
     def get_accelerator_env_var(visible_accelerators: list[str]) -> dict[str, str]:
@@ -85,7 +115,7 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_ccl_backend():
         """Get the CCL backend."""
-        return "xccl"
+        return "bkcl"
 
     @staticmethod
     def get_ccl_socket_ifname_env_var() -> str:
@@ -94,7 +124,7 @@ class KunlunXPUManager(AcceleratorManager):
         Returns:
             str: The network socket interface name environment variable.
         """
-        return "XCCL_SOCKET_IFNAME"
+        return "BKCL_SOCKET_IFNAME"
 
     @staticmethod
     def get_torch_platform():

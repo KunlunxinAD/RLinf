@@ -34,19 +34,16 @@ if package_version is None:
         "vllm package is not installed or its version could not be determined."
     )
 elif package_version >= parse("0.8.5") and package_version < parse("0.9.0"):
+    # torch 2.6 stack
     from rlinf.hybrid_engines.vllm.vllm_0_8_5.executor import VLLMExecutor
 
     VLLM_WORKER_CLS = "rlinf.hybrid_engines.vllm.vllm_0_8_5.worker.VLLMWorker"
-elif package_version >= parse("0.17.0") and package_version < parse("0.18.0"):
-    from rlinf.hybrid_engines.vllm.vllm_0_17_0.executor import VLLMExecutor
+elif package_version >= parse("0.22.0") and package_version < parse("0.24.0"):
+    # torch 2.11 stack
+    from rlinf.hybrid_engines.vllm.vllm_0_23.executor import VLLMExecutor
 
-    VLLM_WORKER_CLS = "rlinf.hybrid_engines.vllm.vllm_0_17_0.worker.VLLMWorker"
+    VLLM_WORKER_CLS = "rlinf.hybrid_engines.vllm.vllm_0_23.worker.VLLMWorker"
 else:
     raise ValueError(f"vllm version {package_version} not supported")
 
-
-def use_runner_arg() -> bool:
-    return package_version >= parse("0.17.0")
-
-
-__all__ = ["VLLMExecutor", "VLLM_WORKER_CLS", "use_runner_arg"]
+__all__ = ["VLLMExecutor", "VLLM_WORKER_CLS"]
