@@ -21,20 +21,6 @@ from typing import Any, Optional
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    set_peft_model_state_dict,
-)
-
-# AutoModelForVision2Seq was renamed to AutoModelForImageTextToText in transformers >= 5.0
-try:
-    from transformers import AutoModelForVision2Seq
-except ImportError:
-    try:
-        from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
-    except ImportError:
-        AutoModelForVision2Seq = None
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
@@ -43,7 +29,7 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
     load_vlm_processor,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
-    HistoryVLMInputBuilder,
+    BufferedVLMInputBuilder,
     get_input_builder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
@@ -122,6 +108,15 @@ class VLMRewardModel(BaseRewardModel):
         return rewards
 
     def setup_model(self) -> None:
+        # AutoModelForVision2Seq was renamed to AutoModelForImageTextToText
+        # in transformers >= 5.0
+        try:
+            from transformers import AutoModelForVision2Seq
+        except ImportError:
+            from transformers import (
+                AutoModelForImageTextToText as AutoModelForVision2Seq,
+            )
+
         self._model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             trust_remote_code=True,
@@ -144,6 +139,12 @@ class VLMRewardModel(BaseRewardModel):
                 if "lora_" in key
             }
             if lora_state_dict:
+                from peft import (
+                    LoraConfig,
+                    get_peft_model,
+                    set_peft_model_state_dict,
+                )
+
                 lora_rank = next(
                     int(value.shape[0])
                     for key, value in lora_state_dict.items()
@@ -191,7 +192,7 @@ class VLMRewardModel(BaseRewardModel):
         return self.apply_gt_success_bonus(rewards, observations)
 
 
-class HistoryVLMRewardModel(VLMRewardModel):
+class BufferedVLMRewardModel(VLMRewardModel):
     def __init__(self, cfg: DictConfig):
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
@@ -201,21 +202,21 @@ class HistoryVLMRewardModel(VLMRewardModel):
 
     def setup_input_builder(self) -> None:
         self.input_builder = get_input_builder(
-            self.cfg.get("input_builder_name", "history_vlm_input_builder")
+            self.cfg.get("input_builder_name", "buffered_vlm_input_builder")
         )(
             **self.cfg.get("input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )
-        assert isinstance(self.input_builder, HistoryVLMInputBuilder), (
-            "HistoryVLMRewardModel only supports HistoryVLMInputBuilder"
+        assert isinstance(self.input_builder, BufferedVLMInputBuilder), (
+            "BufferedVLMRewardModel only supports BufferedVLMInputBuilder"
         )
 
     def forward(
         self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
     ) -> dict[str, Any]:
         raise NotImplementedError(
-            "HistoryVLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
+            "BufferedVLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
         )
 
     def slice_history_input(

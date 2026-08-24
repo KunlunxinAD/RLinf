@@ -29,9 +29,7 @@ from rlinf.algorithms.rlt import (
     predict_rlt_actions,
 )
 from rlinf.config import SupportedModel
-from rlinf.data.embodied_io_struct import (
-    RolloutResult,
-)
+from rlinf.data.schema.embodied_types import PolicyOutput
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
@@ -115,6 +113,7 @@ class MultiStepRolloutWorker(Worker):
                 // self.model_cfg.num_action_chunks
             )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.version = 0
         self.finished_episodes = None
 
@@ -479,7 +478,8 @@ class MultiStepRolloutWorker(Worker):
 
         if SupportedModel(self.model_cfg.model_type) in [
             SupportedModel.OPENPI,
-            SupportedModel.OPENPI_PYTORCH,
+            SupportedModel.OPENPI_RLINF,
+            SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
@@ -488,6 +488,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
+            SupportedModel.MOLMOACT2,
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
@@ -575,22 +576,26 @@ class MultiStepRolloutWorker(Worker):
             )
         return self.predict(env_obs, mode=mode)
 
-    def _build_rollout_result(
+    def _build_policy_output(
         self,
         actions: torch.Tensor,
         result: dict[str, Any],
         *,
         final_obs: dict[str, Any] | None = None,
-    ) -> RolloutResult:
+    ) -> PolicyOutput:
         intervene_flags = result.get("intervene_flags")
-        if intervene_flags is None and result.get("expert_label_flag", False):
+        if (
+            intervene_flags is None
+            and self.enable_dagger
+            and result.get("expert_label_flag", False)
+        ):
             intervene_flags = torch.full(
                 (actions.shape[0], self.model_cfg.num_action_chunks),
                 True,
                 dtype=torch.bool,
                 device=actions.device,
             )
-        return RolloutResult(
+        return PolicyOutput(
             actions=actions,
             prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
             prev_values=result["prev_values"] if self.collect_prev_infos else None,
@@ -691,7 +696,7 @@ class MultiStepRolloutWorker(Worker):
                     intervene_requested=env_output.get("intervene_flags", None),
                 )
 
-                rollout_result = self._build_rollout_result(
+                policy_output = self._build_policy_output(
                     actions,
                     result,
                     final_obs=env_output.get("final_obs", None),
@@ -699,12 +704,12 @@ class MultiStepRolloutWorker(Worker):
                 self.send_to(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
-                    data=rollout_result,
+                    data=policy_output,
                     tag="train_rollout_results",
                     route_key=stage_id,
                     async_op=True,
                     batch_size=self.train_batch_size,
-                    split_fn=self._split_rollout_result,
+                    split_fn=self._split_policy_output,
                 )
         for stage_id in range(self.num_pipeline_stages):
             env_output = await self.recv_from(
@@ -717,6 +722,24 @@ class MultiStepRolloutWorker(Worker):
                 merge_fn=self._merge_obs_batches,
                 infer_batch_size_fn=self._infer_env_batch_size,
             ).async_wait()
+            if not self.collect_final_values:
+                policy_output = PolicyOutput(
+                    versions=torch.zeros_like(
+                        result["prev_logprobs"], dtype=torch.float32
+                    ),
+                )
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=policy_output,
+                    tag="train_rollout_results",
+                    route_key=stage_id,
+                    async_op=True,
+                    batch_size=self.train_batch_size,
+                    split_fn=self._split_policy_output,
+                )
+                continue
+
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
@@ -726,13 +749,13 @@ class MultiStepRolloutWorker(Worker):
 
             if self.enable_opd:
                 # OPD keeps this path separate to retain student action tokens for post-rollout teacher logprobs.
-                rollout_result = self._build_rollout_result(
+                policy_output = self._build_policy_output(
                     actions,
                     result,
                     final_obs=env_output.get("final_obs", None),
                 )
             else:
-                rollout_result = RolloutResult(
+                policy_output = PolicyOutput(
                     actions=actions,
                     prev_values=(
                         result["prev_values"] if self.collect_prev_infos else None
@@ -749,12 +772,12 @@ class MultiStepRolloutWorker(Worker):
             self.send_to(
                 group_name=self.cfg.env.group_name,
                 channel=output_channel,
-                data=rollout_result,
+                data=policy_output,
                 tag="train_rollout_results",
                 route_key=stage_id,
                 async_op=True,
                 batch_size=self.train_batch_size,
-                split_fn=self._split_rollout_result,
+                split_fn=self._split_policy_output,
             )
 
     @Worker.timer("rollout/generate")
@@ -954,9 +977,9 @@ class MultiStepRolloutWorker(Worker):
             ),
         }
 
-    def _split_rollout_result(
-        self, rollout_result: RolloutResult, sizes: list[int]
-    ) -> list[RolloutResult]:
+    def _split_policy_output(
+        self, policy_output: PolicyOutput, sizes: list[int]
+    ) -> list[PolicyOutput]:
         def _split_optional_tensor(
             tensor: torch.Tensor | None,
         ) -> tuple[torch.Tensor | None, ...]:
@@ -964,19 +987,19 @@ class MultiStepRolloutWorker(Worker):
                 return tuple(None for _ in sizes)
             return tuple(torch.split(tensor, sizes, dim=0))
 
-        split_actions = _split_optional_tensor(rollout_result.actions)
-        split_prev_logprobs = _split_optional_tensor(rollout_result.prev_logprobs)
-        split_prev_values = _split_optional_tensor(rollout_result.prev_values)
-        split_bootstrap_values = _split_optional_tensor(rollout_result.bootstrap_values)
-        split_intervene_flags = _split_optional_tensor(rollout_result.intervene_flags)
-        split_versions = _split_optional_tensor(rollout_result.versions)
+        split_actions = _split_optional_tensor(policy_output.actions)
+        split_prev_logprobs = _split_optional_tensor(policy_output.prev_logprobs)
+        split_prev_values = _split_optional_tensor(policy_output.prev_values)
+        split_bootstrap_values = _split_optional_tensor(policy_output.bootstrap_values)
+        split_intervene_flags = _split_optional_tensor(policy_output.intervene_flags)
+        split_versions = _split_optional_tensor(policy_output.versions)
         split_forward_inputs = (
             [{} for _ in sizes]
-            if not rollout_result.forward_inputs
+            if not policy_output.forward_inputs
             else [
                 {
                     key: torch.split(value, sizes, dim=0)[idx]
-                    for key, value in rollout_result.forward_inputs.items()
+                    for key, value in policy_output.forward_inputs.items()
                     if value is not None
                 }
                 for idx in range(len(sizes))
@@ -984,7 +1007,7 @@ class MultiStepRolloutWorker(Worker):
         )
 
         return [
-            RolloutResult(
+            PolicyOutput(
                 actions=split_actions[idx],
                 prev_logprobs=split_prev_logprobs[idx],
                 prev_values=split_prev_values[idx],

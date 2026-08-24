@@ -16,7 +16,12 @@ from typing import Callable, Optional
 
 from omegaconf import DictConfig
 
-from rlinf.config import EMBODIED_MODEL, SupportedModel, torch_dtype_from_precision
+from rlinf.config import (
+    DIFFUSION_MODELS,
+    EMBODIED_MODEL,
+    SupportedModel,
+    torch_dtype_from_precision,
+)
 from rlinf.scheduler import Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
@@ -41,8 +46,11 @@ def register_model(
         )
     _MODEL_REGISTRY[model_type] = model_builder
     SupportedModel.register(model_type, force=force)
+    model_kind = SupportedModel(model_type)
     if category == "embodied":
-        EMBODIED_MODEL.add(SupportedModel(model_type))
+        EMBODIED_MODEL.add(model_kind)
+    elif category == "diffusion":
+        DIFFUSION_MODELS.add(model_kind)
 
 
 def _register_builtin_models():
@@ -56,13 +64,18 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_molmoact2(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.molmoact2 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi import get_model
 
         return get_model(cfg, torch_dtype)
 
-    def _build_openpi_pytorch(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.openpi_pytorch import get_model
+    def _build_openpi_rlinf(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.openpi_rlinf import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -82,6 +95,11 @@ def _register_builtin_models():
         return get_model(cfg, torch_dtype)
 
     def _build_rlt_mlp_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_rlt_td3_mlp_policy(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.mlp_policy import get_model
 
         return get_model(cfg, torch_dtype)
@@ -131,6 +149,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_evo1(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.evo1 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
@@ -143,6 +166,16 @@ def _register_builtin_models():
 
     def _build_steam_value_model(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.value_model.steam import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_sd3(cfg: DictConfig, torch_dtype):
+        from rlinf.models.diffusion.sd3 import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_wan22_ti2v_5b(cfg: DictConfig, torch_dtype):
+        from rlinf.models.diffusion.wan import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -159,14 +192,20 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.MOLMOACT2.value,
+        _build_molmoact2,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.OPENPI.value,
         _build_openpi,
         category="embodied",
         force=True,
     )
     register_model(
-        SupportedModel.OPENPI_PYTORCH.value,
-        _build_openpi_pytorch,
+        SupportedModel.OPENPI_RLINF.value,
+        _build_openpi_rlinf,
         category="embodied",
         force=True,
     )
@@ -191,6 +230,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.RLT_MLP_POLICY.value,
         _build_rlt_mlp_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RLT_TD3_MLP_POLICY.value,
+        _build_rlt_td3_mlp_policy,
         category="embodied",
         force=True,
     )
@@ -255,6 +300,18 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.SD3.value,
+        _build_sd3,
+        category="diffusion",
+        force=True,
+    )
+    register_model(
+        SupportedModel.WAN22_TI2V_5B.value,
+        _build_wan22_ti2v_5b,
+        category="diffusion",
+        force=True,
+    )
+    register_model(
         SupportedModel.GR00T_N1D6.value,
         _build_gr00t_n1d6,
         category="embodied",
@@ -263,6 +320,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.GR00T_N1D7.value,
         _build_gr00t_n1d7,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.EVO1.value,
+        _build_evo1,
         category="embodied",
         force=True,
     )

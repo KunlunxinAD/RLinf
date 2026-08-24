@@ -110,7 +110,7 @@ def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Te
                 res["returns"] = returns
         else:
             kwargs = preprocess_embodied_advantages_inputs(**kwargs)
-            if adv_type != "gae":
+            if adv_type not in ("gae", "grpo_video"):
                 kwargs = calculate_scores(**kwargs)
             advantages, returns = fn(**kwargs)
             res = postprocess_embodied_advantages_outputs(
@@ -157,7 +157,7 @@ def register_toolcall_parser(name: str):
 
 def get_toolcall_parser(name: str) -> Callable:
     if not TOOLCALL_PARSER_REGISTRY:
-        from rlinf.algorithms import toolcall_parsers  # noqa: F401
+        from rlinf.agents.tool_call import parsers  # noqa: F401
 
     if name not in TOOLCALL_PARSER_REGISTRY:
         raise ValueError(f"Toolcall parser {name} not registered")
